@@ -1,6 +1,7 @@
-package ds
+package ratelimit
 
 import (
+	"flag"
 	"fmt"
 	"testing"
 	"time"
@@ -8,15 +9,32 @@ import (
 	"github.com/bradfitz/gomemcache/memcache"
 )
 
-func TestSimpleSliding(t *testing.T) {
-	inMem := NewRateLimiter("TestClientSimple", 50, &InMemoryStore{counters: make(map[string]int)})
-	runTest(inMem, t)
-	memcache := NewRateLimiter("TestClientSimple", 50, configureMemcache())
-	runTest(memcache, t)
+type StoreMode string
+
+const (
+	INMEM     StoreMode = "ram"
+	MEMCACHED StoreMode = "memcache"
+)
+
+var inmem *string
+
+func init() {
+	inmem = flag.String("mode", "ram", "Which store to use? memcache ram")
 
 }
-func runTest(w *RateLimiter, t *testing.T) {
-	//call 51 times
+
+func getRateLimiter(threshold int) *RateLimiter {
+	flag.Parse()
+	if *inmem == string(INMEM) {
+		return NewRateLimiter("TestClientSimple", threshold, &InMemoryStore{counters: make(map[string]int)})
+	}
+	return NewRateLimiter("TestClientSimple", threshold, configureMemcache())
+}
+
+func TestSimpleSliding(t *testing.T) {
+	w := getRateLimiter(50)
+	fmt.Printf("Using RateLimiter %s\n", *w)
+
 	numtimes := 0
 	for {
 		result := w.AllowRequest()
@@ -26,7 +44,7 @@ func runTest(w *RateLimiter, t *testing.T) {
 
 		}
 		numtimes++
-		if numtimes > 51 {
+		if numtimes > (w.threshold + 1) {
 			t.Fatalf("Traffic wasn't throttled")
 		}
 

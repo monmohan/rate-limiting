@@ -1,4 +1,4 @@
-package ds
+package ratelimit
 
 import (
 	"fmt"
@@ -20,7 +20,7 @@ type RateLimiter struct {
 }
 
 func (w RateLimiter) String() string {
-	return fmt.Sprintf("CliendID = %s threshold=%d, Store : %v", w.ClientID, w.threshold, w.store)
+	return fmt.Sprintf("CliendID = %s threshold=%d, Store : %T", w.ClientID, w.threshold, w.store)
 
 }
 func NewRateLimiter(id string, threshold int, counterStore CounterStore) *RateLimiter {
