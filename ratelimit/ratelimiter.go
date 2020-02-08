@@ -52,11 +52,13 @@ func (w *RateLimiter) AllowRequest() bool {
 	percWin1Used := 1 - usedWin2
 	win1Used := int(percWin1Used * float32(lastMinCounter))
 	rollingCtr := win1Used + curMinCounter
-	fmt.Printf("PercWin1Used %f, used Win1Used %d cur Ctr %d rolling Cter %d \n", percWin1Used, win1Used, curMinCounter, rollingCtr)
+	//fmt.Printf("PercWin1Used %f, used Win1Used %d cur Ctr %d rolling Cter %d \n", percWin1Used, win1Used, curMinCounter, rollingCtr)
 	if rollingCtr <= w.threshold {
+		//fmt.Printf("Incrementing: Min %d, Rolling Counter %d , Win1 %d, Current %d\n", curMin, rollingCtr, win1Used, curMinCounter)
 		w.store.incr(fmt.Sprintf("%s#%d", w.ClientID, curMin))
 		return true
 	}
+	fmt.Printf("Throttling: Min %d Rolling Counter %d , Win1 %d, Current %d\n", curMin, rollingCtr, win1Used, curMinCounter)
 	return false
 }
 
