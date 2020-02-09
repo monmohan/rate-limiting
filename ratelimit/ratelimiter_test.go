@@ -28,12 +28,17 @@ func getRateLimiter(threshold int) *RateLimiter {
 	if *inmem == string(INMEM) {
 		return NewRateLimiter("TestClientSimple", threshold, &InMemoryStore{counters: make(map[string]int)})
 	}
-	return NewRateLimiter("TestClientSimple", threshold, configureMemcache())
+	mc := NewRateLimiter("TestClientSimple", threshold, configureMemcache())
+	n, e := mc.ResetCounters()
+	if e != nil {
+		panic(fmt.Sprintf("Counter Reset for Memcache failed Tests can't be executed, counters reset =%d, error=%s", n, e.Error()))
+	}
+	return mc
 }
 
 func TestSimpleSliding(t *testing.T) {
+	fmt.Println("TestSimpleSliding ")
 	w := getRateLimiter(50)
-	fmt.Printf("Using RateLimiter %s\n", *w)
 
 	numtimes := 0
 	for {
@@ -49,9 +54,11 @@ func TestSimpleSliding(t *testing.T) {
 		}
 
 	}
+
 }
 
 func TestBasicSliding(t *testing.T) {
+	fmt.Println("TestBasicSliding ")
 	threshold := 50
 	w := getRateLimiter(threshold)
 	done := make(chan int)
@@ -98,6 +105,7 @@ func TestBasicSliding(t *testing.T) {
 }
 
 func TestSlidingMultiWindow(t *testing.T) {
+	fmt.Println("TestSlidingMultiWindow ")
 	threshold := 120
 	w := getRateLimiter(threshold)
 	curTimeMin, curTimeSec := time.Now().Minute(), time.Now().Second()
@@ -138,7 +146,7 @@ func TestSlidingMultiWindow(t *testing.T) {
 	time.AfterFunc(nextReqTime, nextReqFunc)
 	fmt.Printf("Total requests %d\n", <-done)
 	//since we make the call in 30 seconds in 2nd window and have
-	//already consumed 16 , ((40/60)*threshold)-16 is the value it can have
+	//already consumed 1/6 of threshold , ((40/60)*threshold)-(already consumed) is the value it can have
 	nextMaxAllowed = int(float32(threshold*2)/float32(3)) - nextMaxAllowed
 	totalInWindow2 += nextMaxAllowed
 	time.AfterFunc(30*time.Second, nextReqFunc)

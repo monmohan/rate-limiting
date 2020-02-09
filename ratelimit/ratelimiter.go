@@ -11,6 +11,7 @@ import (
 type CounterStore interface {
 	incr(counterID string) error
 	fetch(prev string, cur string) (PrevMinute int, current int, err error)
+	del(key string) error
 }
 
 type RateLimiter struct {
@@ -62,7 +63,24 @@ func (w *RateLimiter) AllowRequest() bool {
 	return false
 }
 
+//ResetCounters deletes all counter for the client
+func (w *RateLimiter) ResetCounters() (succeeded int, err error) {
+	completed := 0
+	for i := 0; i < 60; i++ {
+		key := fmt.Sprintf("%s#%d", w.ClientID, i)
+		e := w.store.del(key)
+		if e != nil {
+			return completed, e
+		}
+		completed++
+	}
+	return completed, nil
+
+}
+
 //InMemoryStore stores counters in a Map
+//Used only for basic testing, can't be used for distributed case
+//Use MemcachedStore instead
 type InMemoryStore struct {
 	counters map[string]int
 }
@@ -76,6 +94,11 @@ func (im *InMemoryStore) incr(counterID string) error {
 }
 func (im *InMemoryStore) fetch(prev string, cur string) (PrevMinute int, current int, err error) {
 	return im.counters[prev], im.counters[cur], nil
+}
+
+func (im *InMemoryStore) del(key string) error {
+	delete(im.counters, key)
+	return nil
 }
 
 //MemcachedStore stores counters in Memcached servers
@@ -124,4 +147,12 @@ func (mc *MemcachedStore) incr(counterID string) error {
 	}
 	return nil
 
+}
+
+func (mc MemcachedStore) del(key string) error {
+	err := mc.Client.Delete(key)
+	if err != memcache.ErrCacheMiss {
+		return err
+	}
+	return nil
 }
