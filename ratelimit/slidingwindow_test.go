@@ -23,22 +23,24 @@ func init() {
 
 }
 
-func getRateLimiter(threshold int) *RateLimiter {
+func getRateLimiter(threshold int) RateLimiter {
 	flag.Parse()
 	if *inmem == string(INMEM) {
-		return NewRateLimiter("TestClientSimple", threshold, &InMemoryStore{counters: make(map[string]int)})
+		return NewSlidingWindow("TestClientSimple", threshold, &InMemoryStore{counters: make(map[string]int)})
 	}
-	mc := NewRateLimiter("TestClientSimple", threshold, configureMemcache())
-	n, e := mc.ResetCounters()
+	mc := NewSlidingWindow("TestClientSimple", threshold, configureMemcache())
+	e := mc.Reset()
 	if e != nil {
-		panic(fmt.Sprintf("Counter Reset for Memcache failed Tests can't be executed, counters reset =%d, error=%s", n, e.Error()))
+		panic(fmt.Sprintf("Counter Reset for Memcache failed Tests can't be executed, error=%s", e.Error()))
 	}
 	return mc
 }
 
 func TestSimpleSliding(t *testing.T) {
 	fmt.Println("TestSimpleSliding ")
-	w := getRateLimiter(50)
+	threshold := 50
+	err := 1
+	w := getRateLimiter(threshold)
 
 	numtimes := 0
 	for {
@@ -49,7 +51,7 @@ func TestSimpleSliding(t *testing.T) {
 
 		}
 		numtimes++
-		if numtimes > (w.threshold + 1) {
+		if numtimes > (threshold + err) {
 			t.Fatalf("Traffic wasn't throttled")
 		}
 
@@ -64,10 +66,10 @@ func TestBasicSliding(t *testing.T) {
 	done := make(chan int)
 	var func2 func()
 	totalRequest := 0
-	err := 2 //allow for some laxity
+	err := 3 //allow for some laxity
 
 	func1 := func() {
-		fmt.Printf("Sending 20 Requests in minute window = %d\n", time.Now().Minute())
+		fmt.Printf("Sending 20 Requests in minute window = %d, Second := %d \n", time.Now().Minute(), time.Now().Second())
 		for i := 0; i < 20; i++ {
 			result := w.AllowRequest()
 			if !result && totalRequest < threshold {
@@ -79,7 +81,7 @@ func TestBasicSliding(t *testing.T) {
 	}
 
 	func2 = func() {
-		fmt.Printf("Sending another 40 Requests in minute window = %d", time.Now().Minute())
+		fmt.Printf("Sending another 40 Requests in minute window = %d, Second= %d", time.Now().Minute(), time.Now().Second())
 		defer func() { done <- totalRequest }()
 		for i := 0; i < 40; i++ {
 			result := w.AllowRequest()
@@ -158,6 +160,8 @@ func TestSlidingMultiWindow(t *testing.T) {
 
 }
 func configureMemcache() *MemcachedStore {
-	return &MemcachedStore{Client: memcache.New("127.0.0.1:11211")}
+	c := memcache.New("127.0.0.1:11211")
+	c.MaxIdleConns = 5
+	return &MemcachedStore{Client: c}
 
 }

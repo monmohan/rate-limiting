@@ -8,30 +8,37 @@ import (
 	"github.com/bradfitz/gomemcache/memcache"
 )
 
+//CounterStore manages counter value for each minute bucket
 type CounterStore interface {
-	incr(counterID string) error
-	fetch(prev string, cur string) (PrevMinute int, current int, err error)
-	del(key string) error
+	Incr(counterID string) error
+	Fetch(prev string, cur string) (PrevMinute int, current int, err error)
+	Del(key string) error
 }
 
-type RateLimiter struct {
+type RateLimiter interface {
+	AllowRequest() bool
+	Reset() error
+}
+
+//SlidingWindow is an implementation of RateLimiter
+type SlidingWindow struct {
 	threshold int
 	store     CounterStore
-	ClientID  string
+	clientID  string
 }
 
-func (w RateLimiter) String() string {
-	return fmt.Sprintf("CliendID = %s threshold=%d, Store : %T", w.ClientID, w.threshold, w.store)
+func (w SlidingWindow) String() string {
+	return fmt.Sprintf("CliendID = %s Threshold=%d, Store : %T", w.clientID, w.threshold, w.store)
 
 }
-func NewRateLimiter(id string, threshold int, counterStore CounterStore) *RateLimiter {
-	s := RateLimiter{ClientID: id, threshold: threshold, store: counterStore}
+func NewSlidingWindow(id string, threshold int, counterStore CounterStore) RateLimiter {
+	s := SlidingWindow{clientID: id, threshold: threshold, store: counterStore}
 	return &s
 
 }
 
 //AllowRequest , throttle request if rpm exceeds threshold
-func (w *RateLimiter) AllowRequest() bool {
+func (w *SlidingWindow) AllowRequest() bool {
 	reqTS := time.Now()
 	//Build the map keys
 	curMin := reqTS.Minute()
@@ -40,9 +47,9 @@ func (w *RateLimiter) AllowRequest() bool {
 		prevMin = 59
 	}
 	//key is ClientID#minute [0-59] and value is the counter
-	storeKeyPrevMin := fmt.Sprintf("%s#%d", w.ClientID, prevMin)
-	storeKeyCurMin := fmt.Sprintf("%s#%d", w.ClientID, curMin)
-	lastMinCounter, curMinCounter, err := w.store.fetch(storeKeyPrevMin, storeKeyCurMin)
+	storeKeyPrevMin := fmt.Sprintf("%s#%d", w.clientID, prevMin)
+	storeKeyCurMin := fmt.Sprintf("%s#%d", w.clientID, curMin)
+	lastMinCounter, curMinCounter, err := w.store.Fetch(storeKeyPrevMin, storeKeyCurMin)
 	if err != nil {
 		fmt.Printf("Unable to fetch counters, ERR = %s, will allow requests\n ", err.Error())
 		return true
@@ -55,26 +62,25 @@ func (w *RateLimiter) AllowRequest() bool {
 	rollingCtr := win1Used + curMinCounter
 	//fmt.Printf("PercWin1Used %f, used Win1Used %d cur Ctr %d rolling Cter %d \n", percWin1Used, win1Used, curMinCounter, rollingCtr)
 	if rollingCtr <= w.threshold {
-		//fmt.Printf("Incrementing: Min %d, Rolling Counter %d , Win1 %d, Current %d\n", curMin, rollingCtr, win1Used, curMinCounter)
-		w.store.incr(fmt.Sprintf("%s#%d", w.ClientID, curMin))
+		//	fmt.Printf("Incrementing: Min %d, Rolling Counter %d , Win1 %d, Current %d\n", curMin, rollingCtr, win1Used, curMinCounter)
+		w.store.Incr(fmt.Sprintf("%s#%d", w.clientID, curMin))
 		return true
 	}
 	fmt.Printf("Throttling: Min %d Rolling Counter %d , Win1 %d, Current %d\n", curMin, rollingCtr, win1Used, curMinCounter)
 	return false
 }
 
-//ResetCounters deletes all counter for the client
-func (w *RateLimiter) ResetCounters() (succeeded int, err error) {
-	completed := 0
+//Reset deletes all counter for the client
+func (w *SlidingWindow) Reset() error {
 	for i := 0; i < 60; i++ {
-		key := fmt.Sprintf("%s#%d", w.ClientID, i)
-		e := w.store.del(key)
+		key := fmt.Sprintf("%s#%d", w.clientID, i)
+		e := w.store.Del(key)
 		if e != nil {
-			return completed, e
+			return e
 		}
-		completed++
+
 	}
-	return completed, nil
+	return nil
 
 }
 
@@ -88,15 +94,15 @@ type InMemoryStore struct {
 func (im InMemoryStore) String() string {
 	return fmt.Sprintf("InMemory Store : Counters Map %v", im.counters)
 }
-func (im *InMemoryStore) incr(counterID string) error {
+func (im *InMemoryStore) Incr(counterID string) error {
 	im.counters[counterID] = im.counters[counterID] + 1
 	return nil
 }
-func (im *InMemoryStore) fetch(prev string, cur string) (PrevMinute int, current int, err error) {
+func (im *InMemoryStore) Fetch(prev string, cur string) (PrevMinute int, current int, err error) {
 	return im.counters[prev], im.counters[cur], nil
 }
 
-func (im *InMemoryStore) del(key string) error {
+func (im *InMemoryStore) Del(key string) error {
 	delete(im.counters, key)
 	return nil
 }
@@ -110,7 +116,7 @@ func (mc MemcachedStore) String() string {
 	return fmt.Sprintf("Memcache Store : Running at %v", mc.Client)
 }
 
-func (mc *MemcachedStore) fetch(prev string, cur string) (PrevMinute int, Current int, err error) {
+func (mc *MemcachedStore) Fetch(prev string, cur string) (PrevMinute int, Current int, err error) {
 	result, err := mc.Client.GetMulti([]string{prev, cur})
 
 	if err != nil && len(result) == 0 {
@@ -136,7 +142,7 @@ func (mc *MemcachedStore) fetch(prev string, cur string) (PrevMinute int, Curren
 
 }
 
-func (mc *MemcachedStore) incr(counterID string) error {
+func (mc *MemcachedStore) Incr(counterID string) error {
 	_, err := mc.Client.Get(counterID)
 	if err == memcache.ErrCacheMiss {
 		//initialize
@@ -149,7 +155,7 @@ func (mc *MemcachedStore) incr(counterID string) error {
 
 }
 
-func (mc MemcachedStore) del(key string) error {
+func (mc MemcachedStore) Del(key string) error {
 	err := mc.Client.Delete(key)
 	if err != memcache.ErrCacheMiss {
 		return err

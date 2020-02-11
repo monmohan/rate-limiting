@@ -44,7 +44,7 @@ func TestConcurrentCallers(t *testing.T) {
 }
 
 func TestConcurrentSlidingMultiWindow(t *testing.T) {
-	fmt.Println("TestConcurrentSlidingMultiWindow")
+	fmt.Println(t.Name())
 	threshold := 120
 	w := getRateLimiter(threshold)
 	curTimeMin, curTimeSec := time.Now().Minute(), time.Now().Second()
