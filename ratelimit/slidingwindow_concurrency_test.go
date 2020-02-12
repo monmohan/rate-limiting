@@ -44,7 +44,7 @@ func TestConcurrentCallers(t *testing.T) {
 }
 
 func TestConcurrentSlidingMultiWindow(t *testing.T) {
-	fmt.Println(t.Name())
+	fmt.Printf("Start Test: %s \n", t.Name())
 	threshold := 120
 	w := getRateLimiter(threshold)
 	curTimeMin, curTimeSec := time.Now().Minute(), time.Now().Second()
@@ -106,11 +106,11 @@ func TestConcurrentSlidingMultiWindow(t *testing.T) {
 	//already consumed 1/6 of threshold , ((40/60)*threshold)-(already consumed) is the value it can have
 	nextMaxAllowed = int(float32(threshold*2)/float32(3)) - nextMaxAllowed
 	totalInWindow2 += nextMaxAllowed
-	sendParallel(nextReqTime, sendRequest)
+	sendParallel(30*time.Second, sendRequest)
 	validate(nextMaxAllowed)
 
 	nextMaxAllowed = threshold - int(float32(5*totalInWindow2)/float32(6))
-	sendParallel(nextReqTime, sendRequest)
+	sendParallel(30*time.Second, sendRequest)
 	validate(nextMaxAllowed)
 
 }
