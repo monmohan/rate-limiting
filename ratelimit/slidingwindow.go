@@ -3,6 +3,7 @@ package ratelimit
 import (
 	"fmt"
 	"strconv"
+	"sync"
 	"time"
 
 	"github.com/bradfitz/gomemcache/memcache"
@@ -15,6 +16,8 @@ type CounterStore interface {
 	Del(key string) error
 }
 
+//RateLimiter interface, implementations would provide different algorithms
+//to enforce ratelimits
 type RateLimiter interface {
 	AllowRequest() bool
 	Reset() error
@@ -31,6 +34,12 @@ func (w SlidingWindow) String() string {
 	return fmt.Sprintf("CliendID = %s Threshold=%d, Store : %T", w.clientID, w.threshold, w.store)
 
 }
+
+//NewSlidingWindow creates a rate limiter which implements Sliding Window counter
+// Threhsold - the allowed rate, (only supports requests per minute)
+// id - a string identifying rate bucket.
+// Generally it would be your userId or applicationID for which the rate bucket is created
+// CounterStore See CounterStore. For production usage MemcachedStore is recommended
 func NewSlidingWindow(id string, threshold int, counterStore CounterStore) RateLimiter {
 	s := SlidingWindow{clientID: id, threshold: threshold, store: counterStore}
 	return &s
@@ -88,6 +97,7 @@ func (w *SlidingWindow) Reset() error {
 //Used only for basic testing, can't be used for distributed case
 //Use MemcachedStore instead
 type InMemoryStore struct {
+	mu       sync.Mutex //guard counters map
 	counters map[string]int
 }
 
@@ -95,14 +105,20 @@ func (im InMemoryStore) String() string {
 	return fmt.Sprintf("InMemory Store : Counters Map %v", im.counters)
 }
 func (im *InMemoryStore) Incr(counterID string) error {
+	im.mu.Lock()
+	defer im.mu.Unlock()
 	im.counters[counterID] = im.counters[counterID] + 1
 	return nil
 }
 func (im *InMemoryStore) Fetch(prev string, cur string) (PrevMinute int, current int, err error) {
+	im.mu.Lock()
+	defer im.mu.Unlock()
 	return im.counters[prev], im.counters[cur], nil
 }
 
 func (im *InMemoryStore) Del(key string) error {
+	im.mu.Lock()
+	defer im.mu.Unlock()
 	delete(im.counters, key)
 	return nil
 }
@@ -145,8 +161,8 @@ func (mc *MemcachedStore) Fetch(prev string, cur string) (PrevMinute int, Curren
 func (mc *MemcachedStore) Incr(counterID string) error {
 	_, err := mc.Client.Get(counterID)
 	if err == memcache.ErrCacheMiss {
-		//initialize
-		addItem := memcache.Item{Key: counterID, Value: []byte("1")}
+		//initialize, add a 5 minute expiration time
+		addItem := memcache.Item{Key: counterID, Value: []byte("1"), Expiration: 300}
 		mc.Client.Add(&addItem) //ignore error in case someone beat us to it
 	} else {
 		mc.Client.Increment(counterID, uint64(1))
