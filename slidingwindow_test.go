@@ -7,6 +7,8 @@ import (
 	"time"
 
 	"github.com/bradfitz/gomemcache/memcache"
+	"github.com/monmohan/rate-limiting/local"
+	"github.com/monmohan/rate-limiting/memcached"
 )
 
 type StoreMode string
@@ -23,12 +25,12 @@ func init() {
 
 }
 
-func getRateLimiter(threshold int) RateLimiter {
+func getRateLimiter(threshold int) Allower {
 	flag.Parse()
 	if *inmem == string(INMEM) {
-		return NewSlidingWindow("TestClientSimple", threshold, &InMemoryStore{counters: make(map[string]int)})
+		return NewSlidingWindow("TestClientSimple", RPMLimit(threshold), &local.CounterStore{Counters: make(map[string]uint32)})
 	}
-	mc := NewSlidingWindow("TestClientSimple", threshold, configureMemcache())
+	mc := NewSlidingWindow("TestClientSimple", RPMLimit(threshold), configureMemcache())
 	e := mc.Reset()
 	if e != nil {
 		panic(fmt.Sprintf("Counter Reset for Memcache failed Tests can't be executed, error=%s", e.Error()))
@@ -44,7 +46,7 @@ func TestSimpleSliding(t *testing.T) {
 
 	numtimes := 0
 	for {
-		result := w.AllowRequest()
+		result := w.Allow()
 		if !result {
 			fmt.Printf("Number of times %d\n", numtimes)
 			break
@@ -71,7 +73,7 @@ func TestBasicSliding(t *testing.T) {
 	func1 := func() {
 		fmt.Printf("Sending 20 Requests in minute window = %d, Second := %d \n", time.Now().Minute(), time.Now().Second())
 		for i := 0; i < 20; i++ {
-			result := w.AllowRequest()
+			result := w.Allow()
 			if !result && totalRequest < threshold {
 				t.Fatalf("Throttled unnecessarily !! %d\n", i)
 			}
@@ -84,7 +86,7 @@ func TestBasicSliding(t *testing.T) {
 		fmt.Printf("Sending another 40 Requests in minute window = %d, Second= %d", time.Now().Minute(), time.Now().Second())
 		defer func() { done <- totalRequest }()
 		for i := 0; i < 40; i++ {
-			result := w.AllowRequest()
+			result := w.Allow()
 			if result && totalRequest > (threshold+err) {
 				t.Fatalf("Throttling failed, Total requests sent = %d\n", totalRequest)
 			}
@@ -121,7 +123,7 @@ func TestSlidingMultiWindow(t *testing.T) {
 		i := 0
 		defer func() { done <- i }()
 		for ; i < numRequests; i++ {
-			result := w.AllowRequest()
+			result := w.Allow()
 			if result && i > (maxAllowed+err) {
 				t.Fatalf("Throttling failed, Total requests sent = %d\n", i)
 			}
@@ -159,9 +161,9 @@ func TestSlidingMultiWindow(t *testing.T) {
 	fmt.Printf("Total requests now %d\n", <-done)
 
 }
-func configureMemcache() *MemcachedStore {
+func configureMemcache() CounterStore {
 	c := memcache.New("127.0.0.1:11211")
 	c.MaxIdleConns = 5
-	return &MemcachedStore{Client: c}
+	return &memcached.CounterStore{Client: c}
 
 }

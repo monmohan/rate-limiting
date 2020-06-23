@@ -18,7 +18,7 @@ func TestConcurrentCallers(t *testing.T) {
 	sendRequest := func() {
 		i := 0
 		for i < maxCalls {
-			result := w.AllowRequest()
+			result := w.Allow()
 
 			if !result {
 				fmt.Printf("Throttled %d\n", i)
@@ -58,7 +58,7 @@ func TestConcurrentSlidingMultiWindow(t *testing.T) {
 		fmt.Printf("Called at Time Min,Sec = %d,%d ;\n", time.Now().Minute(), time.Now().Second())
 		i := 0
 		for ; i < 2*threshold; i++ {
-			result := w.AllowRequest()
+			result := w.Allow()
 			if !result {
 				fmt.Printf("Throttled %d\n", i)
 				done <- i
