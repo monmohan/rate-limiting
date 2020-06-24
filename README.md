@@ -1,7 +1,17 @@
 # Rate-limiting
-A simple `sliding window` rate limiting implementation based on [blog by Cloudflare](https://blog.cloudflare.com/counting-things-a-lot-of-different-things/#fn3)
+A simple __sliding window , fixed rate__ rate limiting implementation based on [blog by Cloudflare](https://blog.cloudflare.com/counting-things-a-lot-of-different-things/#fn3)
 
-Here is an simple explanation of how this works -
+## Overview
+* Simple algorithm for rate limiting at scale
+* Supports Global Rate Limiting 
+    * The Rate Limiter applies a consistent rate limit to incoming requests regardless of which instance of Rate Limter processes the request. 
+    * This is accomplished by sharing the state using a backing store (OOTB support for memcached)
+* Low memory and network overhead. 
+    * Keeps two counters (32 bit integers) 
+    * Two __contention-free__ network calls (Fetch and Increment)
+
+
+### Explanation of how this works -
 * Assume that we want to limit our requests to 100 Requests per Minute (rpm)
 * Say a request arrives at Minute 23, Second 40 (23:40)
 * If within the window Minute 22, Second 40 (22:40) --> Window Minute 23, Second 40 (23:40), total requests made is < 100, then this request should be allowed
@@ -15,14 +25,14 @@ Here is an simple explanation of how this works -
 
 ## Example Usage
 ```
-  //Choose a store for counters, There are two OOTB, Memcached and InMemory
-  //below example for local memcache
+  //Choose a store for counters, There are two OOTB, Memcached and local.
+  //local is an In-Memory map, to be used only for testing. For production use Memcached. Its proven to work at scale
+  //Below example for a local memcached. In production, you would use a cluster or something like AWS Elasticache
   c := memcache.New("127.0.0.1:11211")
-  counterStore:= &MemcachedStore{Client: c}
-  rpm:=100
-  rateLimiter := NewSlidingWindow("MyBucket", rpm, counterStore)
+  counterStore:= &memcached.CounterStore{Client: c}
+  rateLimiter := NewSlidingWindow("SomeKey", RPMLimit(100), counterStore)
   //Now ratelimiter is ready to use
-  allowed :=rateLimiter.AllowRequest()
+  allowed :=rateLimiter.Allow()
   
 	
 ```
