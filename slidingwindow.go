@@ -5,6 +5,48 @@ import (
 	"time"
 )
 
+type TimeWindow interface {
+	current(ts time.Time) (cur int, percent float32)
+	previous(cur int) (prev int)
+}
+
+type MinuteWindow struct {
+	n int
+}
+
+/**
+ * Set window to highest value <=30, that is a divisor of 60 e.g. if sz=17, actual window size will be 20
+ */
+func makeMinuteWindow(sz int) *MinuteWindow {
+	if sz > 30 {
+		sz = 30
+	}
+
+	buckets := 60 / sz
+	n := 60 / buckets
+	return &MinuteWindow{n: n}
+
+}
+
+func (mw *MinuteWindow) current(ts time.Time) (cur int, curPercent float32) {
+	//Build the map keys
+	curMin := ts.Minute()
+	cur = curMin / mw.n
+	minUsed := ts.Minute() % mw.n
+	totalSecs := minUsed*60 + ts.Second()
+	curPercent = float32(totalSecs) / float32((mw.n * 60))
+	return
+
+}
+
+func (mw *MinuteWindow) previous(cur int) (prev int) {
+	prev = cur - 1
+	if prev < 0 {
+		prev = (prev + mw.n) % mw.n
+	}
+	return
+}
+
 //RPMLimit defines the maximum number of events allowed in a minute
 type RPMLimit uint32
 
@@ -26,6 +68,7 @@ type SlidingWindow struct {
 	rpmLimit RPMLimit
 	store    CounterStore
 	clientID string
+	bucket   TimeWindow
 }
 
 func (w SlidingWindow) String() string {
@@ -39,20 +82,16 @@ func (w SlidingWindow) String() string {
 // Generally it would be your userId or applicationID for which the rate bucket is created
 // CounterStore See CounterStore. For production usage MemcachedStore is recommended
 func NewSlidingWindow(id string, threshold RPMLimit, counterStore CounterStore) *SlidingWindow {
-	s := SlidingWindow{clientID: id, rpmLimit: threshold, store: counterStore}
+	s := SlidingWindow{clientID: id, rpmLimit: threshold, store: counterStore, bucket: makeMinuteWindow(1)}
 	return &s
 
 }
 
 //Allow , throttle request if rpm exceeds threshold
 func (w *SlidingWindow) Allow() bool {
-	reqTS := time.Now()
-	//Build the map keys
-	curMin := reqTS.Minute()
-	prevMin := curMin - 1
-	if prevMin == -1 {
-		prevMin = 59
-	}
+	curMin, usedWin2 := w.bucket.current(time.Now())
+	prevMin := w.bucket.previous(curMin)
+
 	//key is ClientID#minute [0-59] and value is the counter
 	storeKeyPrevMin := fmt.Sprintf("%s#%d", w.clientID, prevMin)
 	storeKeyCurMin := fmt.Sprintf("%s#%d", w.clientID, curMin)
@@ -62,8 +101,6 @@ func (w *SlidingWindow) Allow() bool {
 		return true
 	}
 	//how much of the window have we used so far
-	secs := reqTS.Second()
-	usedWin2 := float32(secs) / 60
 	percWin1Used := 1 - usedWin2
 	win1Used := uint32(percWin1Used * float32(lastMinCounter))
 	rollingCtr := win1Used + curMinCounter

@@ -28,6 +28,7 @@ func init() {
 func getRateLimiter(threshold int) Allower {
 	flag.Parse()
 	if *inmem == string(INMEM) {
+		fmt.Println("Tests running in-memory mode...")
 		return NewSlidingWindow("TestClientSimple", RPMLimit(threshold), &local.CounterStore{Counters: make(map[string]uint32)})
 	}
 	mc := NewSlidingWindow("TestClientSimple", RPMLimit(threshold), configureMemcache())
