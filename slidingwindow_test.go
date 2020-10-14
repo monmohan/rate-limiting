@@ -3,6 +3,7 @@ package ratelimit
 import (
 	"flag"
 	"fmt"
+	"sync"
 	"testing"
 	"time"
 
@@ -65,46 +66,43 @@ func TestBasicSliding(t *testing.T) {
 	fmt.Println("TestBasicSliding ")
 	threshold := 50
 	w := getRateLimiter(threshold)
-	done := make(chan int)
-	var func2 func()
-	totalRequest := 0
-	err := 3 //allow for some laxity
+	var wg sync.WaitGroup
+	err := 2 //allow for some laxity
 
-	func1 := func() {
-		fmt.Printf("Sending 20 Requests in minute window = %d, Second := %d \n", time.Now().Minute(), time.Now().Second())
-		for i := 0; i < 20; i++ {
+	func1 := func(numReqToSend int, previous int) {
+		defer wg.Done()
+		fmt.Printf("Sending %d Requests in minute window = %d, Second := %d \n", numReqToSend, time.Now().Minute(), time.Now().Second())
+		total, i := 0, 0
+		for i < numReqToSend {
 			result := w.Allow()
-			if !result && totalRequest < threshold {
-				t.Fatalf("Throttled unnecessarily !! %d\n", i)
-			}
-			totalRequest++
-		}
-		time.AfterFunc(40*time.Second, func2)
-	}
+			total = previous + i
 
-	func2 = func() {
-		fmt.Printf("Sending another 40 Requests in minute window = %d, Second= %d", time.Now().Minute(), time.Now().Second())
-		defer func() { done <- totalRequest }()
-		for i := 0; i < 40; i++ {
-			result := w.Allow()
-			if result && totalRequest > (threshold+err) {
-				t.Fatalf("Throttling failed, Total requests sent = %d\n", totalRequest)
+			if result && total > threshold+err {
+				t.Fatalf("Throttling failed, Total requests sent = %d\n", total)
 			}
 			if !result {
-				if totalRequest < threshold {
-					t.Fatalf("Throttled unnecessarily, Total requests sent = %d\n", totalRequest)
+				if total < threshold {
+					t.Fatalf("Throttled unnecessarily, Total requests sent = %d\n", total)
 				}
+				fmt.Printf("Total Requests sent %d\n", total)
 				break
 			}
-			totalRequest++
+			i++
 		}
 
 	}
 
-	time.AfterFunc(10*time.Second, func1)
-
-	totalRequest = <-done //wait for the goroutines to finish
-	fmt.Printf("Total Requests Sent = %d\n", totalRequest)
+	secToNextMin := time.Second * time.Duration(60-time.Now().Second())
+	wg.Add(1)
+	time.AfterFunc(secToNextMin, func() {
+		func1(20, 0)
+	}) //send first call at start of the minute
+	nextCall := secToNextMin + 40*time.Second
+	wg.Add(1)
+	time.AfterFunc(nextCall, func() {
+		func1(40, 20)
+	}) //send second call 40 seconds after first
+	wg.Wait()
 
 }
 
