@@ -7,8 +7,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/benbjohnson/clock"
 	"github.com/bradfitz/gomemcache/memcache"
-	"github.com/monmohan/rate-limiting/local"
 	"github.com/monmohan/rate-limiting/memcached"
 )
 
@@ -26,13 +26,32 @@ func init() {
 
 }
 
-func getRateLimiter(threshold int) Allower {
+func getRateLimiter(threshold uint32) Allower {
 	flag.Parse()
-	if *inmem == string(INMEM) {
-		fmt.Println("Tests running in-memory mode...")
-		return NewSlidingWindow("TestClientSimple", RPMLimit(threshold), &local.CounterStore{Counters: make(map[string]uint32)})
+	mc := NewRpmLimiter("TestClientSimple", threshold)
+	if *inmem == string(MEMCACHED) {
+		fmt.Println("Tests running with memache store...")
+		mc.Store = configureMemcache()
 	}
-	mc := NewSlidingWindow("TestClientSimple", RPMLimit(threshold), configureMemcache())
+	e := mc.Reset()
+	if e != nil {
+		panic(fmt.Sprintf("Counter Reset for Memcache failed Tests can't be executed, error=%s", e.Error()))
+	}
+	return mc
+}
+
+func getMutliMinRateLimiter(threshold uint32, minsz int, mockClock clock.Clock) Allower {
+	flag.Parse()
+	mc := &SlidingWindowRateLimiter{
+		ClientID:        "TestMultiMin",
+		Bucket:          ConvertToTimeWindow(minsz),
+		Limit:           threshold,
+		CurrentTimeFunc: func() time.Time { return mockClock.Now() },
+	}
+	if *inmem == string(MEMCACHED) {
+		fmt.Println("Tests running with memache store...")
+		mc.Store = configureMemcache()
+	}
 	e := mc.Reset()
 	if e != nil {
 		panic(fmt.Sprintf("Counter Reset for Memcache failed Tests can't be executed, error=%s", e.Error()))
@@ -44,7 +63,7 @@ func TestSimpleSliding(t *testing.T) {
 	fmt.Println("TestSimpleSliding ")
 	threshold := 50
 	err := 1
-	w := getRateLimiter(threshold)
+	w := getRateLimiter(uint32(threshold))
 
 	numtimes := 0
 	for {
@@ -66,7 +85,7 @@ func TestSimpleSliding(t *testing.T) {
 func TestBasicSliding(t *testing.T) {
 	fmt.Println("TestBasicSliding ")
 	threshold := 50
-	w := getRateLimiter(threshold)
+	w := getRateLimiter(uint32(threshold))
 	var wg sync.WaitGroup
 	err := 2 //allow for some laxity
 
@@ -94,6 +113,7 @@ func TestBasicSliding(t *testing.T) {
 	}
 
 	secToNextMin := time.Second * time.Duration(60-time.Now().Second())
+	fmt.Printf("Waiting for %v seconds to start the test..\n", secToNextMin)
 	wg.Add(1)
 	time.AfterFunc(secToNextMin, func() {
 		func1(20, 0)
@@ -110,7 +130,7 @@ func TestBasicSliding(t *testing.T) {
 func TestSlidingMultiWindow(t *testing.T) {
 	fmt.Println("TestSlidingMultiWindow ")
 	threshold := 120
-	w := getRateLimiter(threshold)
+	w := getRateLimiter(uint32(threshold))
 	curTimeMin, curTimeSec := time.Now().Minute(), time.Now().Second()
 	secToNextMin := 60 - curTimeSec
 	fmt.Printf("Current Min:= %d, Seconds until next Min:= %d\n", curTimeMin, secToNextMin)
@@ -160,6 +180,54 @@ func TestSlidingMultiWindow(t *testing.T) {
 	fmt.Printf("Total requests now %d\n", <-done)
 
 }
+
+/*func TestBasicSlidingMultiMinute(t *testing.T) {
+	fmt.Println("TestBasicSlidingMultiMinute ")
+	threshold := 200
+	clock := clock.NewMock()
+	winsz := 10
+	w := getMutliMinRateLimiter(uint32(threshold), winsz, clock)
+	var wg sync.WaitGroup
+	err := 2 //allow for some laxity
+
+	func1 := func(numReqToSend int, previous int) {
+		defer wg.Done()
+		fmt.Printf("Sending %d Requests in minute window = %d, Second := %d \n", numReqToSend, time.Now().Minute(), time.Now().Second())
+		total, i := 0, 0
+		for i < numReqToSend {
+			result := w.Allow()
+			total = previous + i
+
+			if result && total > threshold+err {
+				t.Fatalf("Throttling failed, Total requests sent = %d\n", total)
+			}
+			if !result {
+				if total < threshold {
+					t.Fatalf("Throttled unnecessarily, Total requests sent = %d\n", total)
+				}
+				fmt.Printf("Total Requests sent %d\n", total)
+				break
+			}
+			i++
+		}
+
+	}
+
+	secToNextMin := time.Second * time.Duration(60-time.Now().Second())
+	fmt.Printf("Waiting for %v seconds to start the test..\n", secToNextMin)
+	wg.Add(1)
+	time.AfterFunc(secToNextMin, func() {
+		func1(20, 0)
+	}) //send first call at start of the minute
+	nextCall := secToNextMin + 40*time.Second
+	wg.Add(1)
+	time.AfterFunc(nextCall, func() {
+		func1(40, 20)
+	}) //send second call 40 seconds after first
+	wg.Wait()
+
+}*/
+
 func configureMemcache() CounterStore {
 	c := memcache.New("127.0.0.1:11211")
 	c.MaxIdleConns = 5
