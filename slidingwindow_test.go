@@ -41,11 +41,11 @@ func getRateLimiter(threshold uint32) Allower {
 	return mc
 }
 
-func getMutliMinRateLimiter(threshold uint32, minsz int, mockClock clock.Clock) Allower {
+func getMutliMinRateLimiter(threshold uint32, minsz int, mockClock clock.Clock) *SlidingWindowRateLimiter {
 	flag.Parse()
 	mc := &SlidingWindowRateLimiter{
 		ClientID:        "TestMultiMin",
-		Bucket:          ConvertToTimeWindow(minsz),
+		Bucket:          ConvertToMinuteWindow(minsz),
 		Limit:           threshold,
 		Store:           &local.CounterStore{Counters: make(map[string]uint32, 0)},
 		CurrentTimeFunc: func() time.Time { return mockClock.Now() },
@@ -188,13 +188,15 @@ func TestBasicSlidingMultiMinute(t *testing.T) {
 	threshold := 50
 	windowSizes := []int{10, 5, 15, 20, 12}
 	var wg sync.WaitGroup
-	sendRequests := func(numReqToSend int, previous int, w Allower, clock clock.Clock) {
+	sendRequests := func(numReqToSend int, previous int, w *SlidingWindowRateLimiter, clock clock.Clock) {
 		err := 2 //allow for some laxity
 		defer wg.Done()
 		fmt.Printf("Sending %d Requests in minute window = %d, Second := %d \n", numReqToSend, clock.Now().Minute(), clock.Now().Second())
 		total, i := 0, 0
 		for i < numReqToSend {
-			result := w.Allow()
+			stats := w.AllowWithStats()
+			fmt.Println(stats)
+			result := stats.Allow
 			total = previous + i
 
 			if result && total > threshold+err {
@@ -232,11 +234,13 @@ func TestSlidingMultiWindowMultiMin(t *testing.T) {
 	threshold := 60
 	windowSizes := []int{5, 10, 12, 15, 20}
 	err := 3
-	sendRequest := func(numRequests int, maxAllowed int, w Allower, clock clock.Clock) int {
+	sendRequest := func(numRequests int, maxAllowed int, w *SlidingWindowRateLimiter, clock clock.Clock) int {
 		fmt.Printf("Called at Time Min,Sec = %d,%d ; MaxAllowed=%d\n", clock.Now().Minute(), clock.Now().Second(), maxAllowed)
 		i := 0
 		for ; i < numRequests; i++ {
-			result := w.Allow()
+			stats := w.AllowWithStats()
+			fmt.Println(stats)
+			result := stats.Allow
 			if result && i > (maxAllowed+err) {
 				t.Fatalf("Throttling failed, Total requests sent = %d\n", i)
 			}

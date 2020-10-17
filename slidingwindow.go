@@ -8,22 +8,24 @@ import (
 	"github.com/monmohan/rate-limiting/local"
 )
 
-var oneMinWindow = ConvertToTimeWindow(1)
+var oneMinWindow = ConvertToMinuteWindow(1)
 var inMemMapStore = &local.CounterStore{Counters: make(map[string]uint32)}
 
+//TimeWindow is an interface describing operations on a generic window of time
 type TimeWindow interface {
 	current(ts time.Time) (cur int, percent float32)
 	previous(cur int) (prev int)
 }
 
+//MinuteWindow is an implemention of TimeWindow for minute sized window
+//Minimum size of such a window is 1 min whereas maximum is 30 to guarantee atleast two windows in an hour
 type MinuteWindow struct {
 	n int
 }
 
-/**
- * Set window to highest value <=30, that is a divisor of 60 e.g. if sz=17, actual window size will be 20
- */
-func ConvertToTimeWindow(sz int) *MinuteWindow {
+//ConvertToMinuteWindow is a helper function which
+//sets window to highest value <=30, that is a divisor of 60 e.g. if sz=17, actual window size will be 20
+func ConvertToMinuteWindow(sz int) *MinuteWindow {
 	if sz > 30 {
 		sz = 30
 	}
@@ -66,7 +68,7 @@ type Allower interface {
 	Allow() bool
 }
 
-//SlidingWindowRateLimiter is an implementation of RateLimiter
+//SlidingWindowRateLimiter is an implementation of Allower
 type SlidingWindowRateLimiter struct {
 	Limit           uint32
 	Store           CounterStore
@@ -80,6 +82,8 @@ func (f windowTime) MarshalJSON() ([]byte, error) {
 	return json.Marshal(fmt.Sprintf("H %d M %d S %d", time.Time(f).Hour(), time.Time(f).Minute(), time.Time(f).Second()))
 }
 
+// WindowStats is a struct holding information on window stats during processing
+// Callers can examine that to make richer decisions, more than just allowing or denying the request
 type WindowStats struct {
 	RequestTime               time.Time `json:"-"`
 	WindowTime                windowTime
@@ -119,12 +123,10 @@ func NewRpmLimiter(id string, threshold uint32) *SlidingWindowRateLimiter {
 
 //Allow , throttle request if rpm exceeds threshold
 func (w *SlidingWindowRateLimiter) Allow() bool {
-	stats := w.AllowWithStats()
-	fmt.Println(stats)
-	return stats.Allow
-
+	return w.AllowWithStats().Allow
 }
 
+//AllowWithStats - Return stats of the processed windows in addition to allow and deny
 func (w *SlidingWindowRateLimiter) AllowWithStats() (stats WindowStats) {
 	now := time.Now()
 	if w.CurrentTimeFunc != nil {
