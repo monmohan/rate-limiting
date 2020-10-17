@@ -186,7 +186,7 @@ func TestSlidingMultiWindow(t *testing.T) {
 func TestBasicSlidingMultiMinute(t *testing.T) {
 	fmt.Println("TestBasicSlidingMultiMinute ")
 	threshold := 50
-	windowSizes := []int{10, 5, 15}
+	windowSizes := []int{10, 5, 15, 20, 12}
 	var wg sync.WaitGroup
 	sendRequests := func(numReqToSend int, previous int, w Allower, clock clock.Clock) {
 		err := 2 //allow for some laxity
@@ -223,6 +223,56 @@ func TestBasicSlidingMultiMinute(t *testing.T) {
 		wg.Add(1)
 		sendRequests(threshold/2, threshold, w, clock) //should fail
 		wg.Wait()
+	}
+
+}
+
+func TestSlidingMultiWindowMultiMin(t *testing.T) {
+	fmt.Println("TestSlidingMultiWindowMultiMin ")
+	threshold := 60
+	windowSizes := []int{5, 10, 12, 15, 20}
+	err := 3
+	sendRequest := func(numRequests int, maxAllowed int, w Allower, clock clock.Clock) int {
+		fmt.Printf("Called at Time Min,Sec = %d,%d ; MaxAllowed=%d\n", clock.Now().Minute(), clock.Now().Second(), maxAllowed)
+		i := 0
+		for ; i < numRequests; i++ {
+			result := w.Allow()
+			if result && i > (maxAllowed+err) {
+				t.Fatalf("Throttling failed, Total requests sent = %d\n", i)
+			}
+			if !result {
+				if i < (maxAllowed - err) {
+					t.Fatalf("Throttled unnecessarily, Total requests sent = %d\n", i)
+				}
+				break
+			}
+
+		}
+		fmt.Printf("Total Requests sent =%d\n", i)
+		return i
+	}
+
+	for _, winsz := range windowSizes {
+		mockClock := clock.NewMock() // initialized to unix zero ts
+		w := getMutliMinRateLimiter(uint32(threshold), winsz, mockClock)
+		durationInStartWin := mockClock.Now().Minute() % winsz
+		nextMaxAllowed := threshold
+		sendRequest(threshold/2, nextMaxAllowed, w, mockClock)
+		mockClock.Add(1 * time.Minute) //add a minute and send rest
+		sendRequest(threshold/2, nextMaxAllowed, w, mockClock)
+
+		//advance clock by window size and 100 seconds into second window
+		mockClock.Add(time.Duration(winsz) * time.Minute)
+		mockClock.Add(40 * time.Second)
+		nextMaxAllowed = int(float32(100+(60*durationInStartWin)) / float32((60 * winsz)) * float32(threshold))
+		sendRequest(threshold, nextMaxAllowed, w, mockClock)
+		//try again in 20 seconds, it should throttle
+		mockClock.Add(20 * time.Second)
+		s := sendRequest(threshold, 1, w, mockClock)
+		mockClock.Add(1 * time.Minute)
+		//3 minute into the second window by now
+		nextMaxAllowed = (int(float32(180+(60*durationInStartWin)) / float32((winsz * 60)) * float32(threshold))) - (nextMaxAllowed + s)
+		sendRequest(threshold, nextMaxAllowed, w, mockClock)
 	}
 
 }

@@ -8,8 +8,8 @@ import (
 	"github.com/monmohan/rate-limiting/local"
 )
 
-var defaultWindow = ConvertToTimeWindow(1)
-var defaultStore = &local.CounterStore{Counters: make(map[string]uint32)}
+var oneMinWindow = ConvertToTimeWindow(1)
+var inMemMapStore = &local.CounterStore{Counters: make(map[string]uint32)}
 
 type TimeWindow interface {
 	current(ts time.Time) (cur int, percent float32)
@@ -112,7 +112,7 @@ func (w SlidingWindowRateLimiter) String() string {
 // Generally it would be your userId or applicationID for which the rate bucket is created
 // The default counter store is used which is an in-memory map. For production use Memcached backed store
 func NewRpmLimiter(id string, threshold uint32) *SlidingWindowRateLimiter {
-	s := SlidingWindowRateLimiter{ClientID: id, Limit: threshold, Store: defaultStore, Bucket: defaultWindow}
+	s := SlidingWindowRateLimiter{ClientID: id, Limit: threshold, Store: inMemMapStore, Bucket: oneMinWindow}
 	return &s
 
 }
