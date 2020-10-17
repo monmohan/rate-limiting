@@ -9,6 +9,7 @@ import (
 
 	"github.com/benbjohnson/clock"
 	"github.com/bradfitz/gomemcache/memcache"
+	"github.com/monmohan/rate-limiting/local"
 	"github.com/monmohan/rate-limiting/memcached"
 )
 
@@ -46,6 +47,7 @@ func getMutliMinRateLimiter(threshold uint32, minsz int, mockClock clock.Clock) 
 		ClientID:        "TestMultiMin",
 		Bucket:          ConvertToTimeWindow(minsz),
 		Limit:           threshold,
+		Store:           &local.CounterStore{Counters: make(map[string]uint32, 0)},
 		CurrentTimeFunc: func() time.Time { return mockClock.Now() },
 	}
 	if *inmem == string(MEMCACHED) {
@@ -181,18 +183,15 @@ func TestSlidingMultiWindow(t *testing.T) {
 
 }
 
-/*func TestBasicSlidingMultiMinute(t *testing.T) {
+func TestBasicSlidingMultiMinute(t *testing.T) {
 	fmt.Println("TestBasicSlidingMultiMinute ")
-	threshold := 200
-	clock := clock.NewMock()
-	winsz := 10
-	w := getMutliMinRateLimiter(uint32(threshold), winsz, clock)
+	threshold := 50
+	windowSizes := []int{10, 5, 15}
 	var wg sync.WaitGroup
-	err := 2 //allow for some laxity
-
-	func1 := func(numReqToSend int, previous int) {
+	sendRequests := func(numReqToSend int, previous int, w Allower, clock clock.Clock) {
+		err := 2 //allow for some laxity
 		defer wg.Done()
-		fmt.Printf("Sending %d Requests in minute window = %d, Second := %d \n", numReqToSend, time.Now().Minute(), time.Now().Second())
+		fmt.Printf("Sending %d Requests in minute window = %d, Second := %d \n", numReqToSend, clock.Now().Minute(), clock.Now().Second())
 		total, i := 0, 0
 		for i < numReqToSend {
 			result := w.Allow()
@@ -205,7 +204,7 @@ func TestSlidingMultiWindow(t *testing.T) {
 				if total < threshold {
 					t.Fatalf("Throttled unnecessarily, Total requests sent = %d\n", total)
 				}
-				fmt.Printf("Total Requests sent %d\n", total)
+				fmt.Printf("Throttled correctly, Total Requests sent %d\n", total)
 				break
 			}
 			i++
@@ -213,20 +212,20 @@ func TestSlidingMultiWindow(t *testing.T) {
 
 	}
 
-	secToNextMin := time.Second * time.Duration(60-time.Now().Second())
-	fmt.Printf("Waiting for %v seconds to start the test..\n", secToNextMin)
-	wg.Add(1)
-	time.AfterFunc(secToNextMin, func() {
-		func1(20, 0)
-	}) //send first call at start of the minute
-	nextCall := secToNextMin + 40*time.Second
-	wg.Add(1)
-	time.AfterFunc(nextCall, func() {
-		func1(40, 20)
-	}) //send second call 40 seconds after first
-	wg.Wait()
+	for _, winsz := range windowSizes {
+		clock := clock.NewMock() // initialized to unix zero ts
+		w := getMutliMinRateLimiter(uint32(threshold), winsz, clock)
+		wg.Add(1)
+		sendRequests(threshold/2, 0, w, clock)
+		clock.Add(time.Duration(winsz/2) * time.Minute)
+		wg.Add(1)
+		sendRequests(threshold/2, threshold/2, w, clock)
+		wg.Add(1)
+		sendRequests(threshold/2, threshold, w, clock) //should fail
+		wg.Wait()
+	}
 
-}*/
+}
 
 func configureMemcache() CounterStore {
 	c := memcache.New("127.0.0.1:11211")
