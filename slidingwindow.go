@@ -12,6 +12,8 @@ var oneMinWindow = ConvertToMinuteWindow(1)
 var inMemMapStore = &local.CounterStore{Counters: make(map[string]uint32)}
 
 //TimeWindow is an interface describing operations on a generic window of time
+//TimeWindow is represented as an integer indexed bucket. For example a one minute time window has 60 buckets from 0-59
+// and 15 minute TimeWindow has 4 buckets from 0-3
 type TimeWindow interface {
 	current(ts time.Time) (cur int, percent float32)
 	previous(cur int) (prev int)
