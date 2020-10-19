@@ -48,11 +48,10 @@ func (mw *MinuteWindow) current(ts time.Time) (cur int, curPercent float32) {
 }
 
 func (mw *MinuteWindow) previous(cur int) (prev int) {
-	prev = cur - 1
-	if prev < 0 {
-		prev = (prev + mw.n) % mw.n
+	if cur == 0 {
+		return (60 / mw.n) - 1
 	}
-	return
+	return cur - 1
 }
 
 //CounterStore manages counter value for each minute bucket
@@ -154,7 +153,6 @@ func (w *SlidingWindowRateLimiter) AllowWithStats() (stats WindowStats) {
 	stats.PreviousWindowUsedPercent, stats.PreviousWindowUseCount, stats.RollingCounter, stats.CurrentCounter = prevWinUsePerc, prevWinUseCount, rollingCtr, curMinCounter
 
 	if rollingCtr <= uint32(w.Limit) {
-		//fmt.Printf("Incrementing: Min %d, Rolling Counter %d , Win1 %d, Current %d\n", curMin, rollingCtr, prevWinUseCount, curMinCounter)
 		w.Store.Incr(fmt.Sprintf("%s#%d", w.ClientID, curMin))
 		stats.Allow = true
 		return

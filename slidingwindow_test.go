@@ -31,8 +31,9 @@ func getRateLimiter(threshold uint32) Allower {
 	flag.Parse()
 	mc := NewRpmLimiter("TestClientSimple", threshold)
 	if *inmem == string(MEMCACHED) {
-		fmt.Println("Tests running with memache store...")
-		mc.Store = configureMemcache()
+		memcacheStore := configureMemcache()
+		fmt.Println("Tests running with memcache store...")
+		mc.Store = memcacheStore
 	}
 	e := mc.Reset()
 	if e != nil {
@@ -51,8 +52,9 @@ func getMutliMinRateLimiter(threshold uint32, minsz int, mockClock clock.Clock) 
 		CurrentTimeFunc: func() time.Time { return mockClock.Now() },
 	}
 	if *inmem == string(MEMCACHED) {
-		fmt.Println("Tests running with memache store...")
-		mc.Store = configureMemcache()
+		memcacheStore := configureMemcache()
+		fmt.Println("Tests running with memcache store...")
+		mc.Store = memcacheStore
 	}
 	e := mc.Reset()
 	if e != nil {
@@ -186,7 +188,7 @@ func TestSlidingMultiWindow(t *testing.T) {
 func TestBasicSlidingMultiMinute(t *testing.T) {
 	fmt.Println("TestBasicSlidingMultiMinute ")
 	threshold := 50
-	windowSizes := []int{10, 5, 15, 20, 12}
+	windowSizes := []int{10, 5, 15, 20, 12, 30}
 	var wg sync.WaitGroup
 	sendRequests := func(numReqToSend int, previous int, w *SlidingWindowRateLimiter, clock clock.Clock) {
 		err := 2 //allow for some laxity
@@ -232,7 +234,8 @@ func TestBasicSlidingMultiMinute(t *testing.T) {
 func TestSlidingMultiWindowMultiMin(t *testing.T) {
 	fmt.Println("TestSlidingMultiWindowMultiMin ")
 	threshold := 60
-	windowSizes := []int{5, 10, 12, 15, 20}
+	windowSizes := []int{5, 10, 12, 15, 20, 30}
+	//windowSizes := []int{30}
 	err := 3
 	sendRequest := func(numRequests int, maxAllowed int, w *SlidingWindowRateLimiter, clock clock.Clock) int {
 		fmt.Printf("Called at Time Min,Sec = %d,%d ; MaxAllowed=%d\n", clock.Now().Minute(), clock.Now().Second(), maxAllowed)
