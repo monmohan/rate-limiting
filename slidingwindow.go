@@ -1,12 +1,58 @@
 package ratelimit
 
 import (
+	"encoding/json"
 	"fmt"
 	"time"
+
+	"github.com/monmohan/rate-limiting/local"
 )
 
-//RPMLimit defines the maximum number of events allowed in a minute
-type RPMLimit uint32
+var oneMinWindow = ConvertToMinuteWindow(1)
+var inMemMapStore = &local.CounterStore{Counters: make(map[string]uint32)}
+
+//TimeWindow is an interface describing operations on a generic window of time
+type TimeWindow interface {
+	current(ts time.Time) (cur int, percent float32)
+	previous(cur int) (prev int)
+}
+
+//MinuteWindow is an implemention of TimeWindow for minute sized window
+//Minimum size of such a window is 1 min whereas maximum is 30 to guarantee atleast two windows in an hour
+type MinuteWindow struct {
+	n int
+}
+
+//ConvertToMinuteWindow is a helper function which
+//sets window to highest value <=30, that is a divisor of 60 e.g. if sz=17, actual window size will be 20
+func ConvertToMinuteWindow(sz int) *MinuteWindow {
+	if sz > 30 {
+		sz = 30
+	}
+
+	buckets := 60 / sz
+	n := 60 / buckets
+	return &MinuteWindow{n: n}
+
+}
+
+func (mw *MinuteWindow) current(ts time.Time) (cur int, curPercent float32) {
+	//Build the map keys
+	curMin := ts.Minute()
+	cur = curMin / mw.n
+	minUsed := ts.Minute() % mw.n
+	totalSecs := minUsed*60 + ts.Second()
+	curPercent = float32(totalSecs) / float32((mw.n * 60))
+	return
+
+}
+
+func (mw *MinuteWindow) previous(cur int) (prev int) {
+	if cur == 0 {
+		return (60 / mw.n) - 1
+	}
+	return cur - 1
+}
 
 //CounterStore manages counter value for each minute bucket
 type CounterStore interface {
@@ -21,67 +67,105 @@ type Allower interface {
 	Allow() bool
 }
 
-//SlidingWindow is an implementation of RateLimiter
-type SlidingWindow struct {
-	rpmLimit RPMLimit
-	store    CounterStore
-	clientID string
+//SlidingWindowRateLimiter is an implementation of Allower
+type SlidingWindowRateLimiter struct {
+	Limit           uint32
+	Store           CounterStore
+	ClientID        string
+	Bucket          TimeWindow
+	CurrentTimeFunc func() time.Time
+}
+type windowTime time.Time
+
+func (f windowTime) MarshalJSON() ([]byte, error) {
+	return json.Marshal(fmt.Sprintf("H %d M %d S %d", time.Time(f).Hour(), time.Time(f).Minute(), time.Time(f).Second()))
 }
 
-func (w SlidingWindow) String() string {
-	return fmt.Sprintf("CliendID = %s Threshold=%d, Store : %T", w.clientID, w.rpmLimit, w.store)
+// WindowStats is a struct holding information on window stats during processing
+// Callers can examine that to make richer decisions, more than just allowing or denying the request
+type WindowStats struct {
+	RequestTime               time.Time `json:"-"`
+	WindowTime                windowTime
+	CurrentBucketID           int
+	CurrentCounter            uint32
+	PreviousBucketID          int
+	PreviousWindowUsedPercent float32
+	PreviousWindowUseCount    uint32
+	RollingCounter            uint32
+	Allow                     bool
+	LastErr                   error `json:",omitempty"`
+}
+
+func (ws WindowStats) String() string {
+	b, err := json.Marshal(ws)
+	if err != nil {
+		fmt.Println(err.Error())
+	}
+	return string(b)
+}
+
+func (w SlidingWindowRateLimiter) String() string {
+	return fmt.Sprintf("CliendID = %s Threshold=%d, Store : %T", w.ClientID, w.Limit, w.Store)
 
 }
 
-//NewSlidingWindow creates a rate limiter which implements Sliding Window counter
-// Threhsold - the allowed rate, (only supports requests per minute)
+//NewRpmLimiter as name suggests provides "per minute"  based rate limiting
+// Threhsold - the allowed rate, maximum requests in a minute
 // id - a string identifying rate bucket.
 // Generally it would be your userId or applicationID for which the rate bucket is created
-// CounterStore See CounterStore. For production usage MemcachedStore is recommended
-func NewSlidingWindow(id string, threshold RPMLimit, counterStore CounterStore) *SlidingWindow {
-	s := SlidingWindow{clientID: id, rpmLimit: threshold, store: counterStore}
+// The default counter store is used which is an in-memory map. For production use Memcached backed store
+func NewRpmLimiter(id string, threshold uint32) *SlidingWindowRateLimiter {
+	s := SlidingWindowRateLimiter{ClientID: id, Limit: threshold, Store: inMemMapStore, Bucket: oneMinWindow}
 	return &s
 
 }
 
 //Allow , throttle request if rpm exceeds threshold
-func (w *SlidingWindow) Allow() bool {
-	reqTS := time.Now()
-	//Build the map keys
-	curMin := reqTS.Minute()
-	prevMin := curMin - 1
-	if prevMin == -1 {
-		prevMin = 59
+func (w *SlidingWindowRateLimiter) Allow() bool {
+	return w.AllowWithStats().Allow
+}
+
+//AllowWithStats - Return stats of the processed windows in addition to allow and deny
+func (w *SlidingWindowRateLimiter) AllowWithStats() (stats WindowStats) {
+	now := time.Now()
+	if w.CurrentTimeFunc != nil {
+		now = w.CurrentTimeFunc()
 	}
+	stats = WindowStats{RequestTime: now, WindowTime: windowTime(now)}
+	curMin, curWinUsePerc := w.Bucket.current(now)
+	prevMin := w.Bucket.previous(curMin)
+	stats.PreviousBucketID, stats.CurrentBucketID = prevMin, curMin
+
 	//key is ClientID#minute [0-59] and value is the counter
-	storeKeyPrevMin := fmt.Sprintf("%s#%d", w.clientID, prevMin)
-	storeKeyCurMin := fmt.Sprintf("%s#%d", w.clientID, curMin)
-	lastMinCounter, curMinCounter, err := w.store.Fetch(storeKeyPrevMin, storeKeyCurMin)
+	storeKeyPrevMin := fmt.Sprintf("%s#%d", w.ClientID, prevMin)
+	storeKeyCurMin := fmt.Sprintf("%s#%d", w.ClientID, curMin)
+	lastMinCounter, curMinCounter, err := w.Store.Fetch(storeKeyPrevMin, storeKeyCurMin)
 	if err != nil {
-		fmt.Printf("Unable to fetch counters, ERR = %s, will allow requests\n ", err.Error())
-		return true
+		stats.LastErr = fmt.Errorf("Unable to fetch counters, ERR = %s, will allow requests\n ", err.Error())
+		stats.Allow = true
+		return
+
 	}
 	//how much of the window have we used so far
-	secs := reqTS.Second()
-	usedWin2 := float32(secs) / 60
-	percWin1Used := 1 - usedWin2
-	win1Used := uint32(percWin1Used * float32(lastMinCounter))
-	rollingCtr := win1Used + curMinCounter
-	//fmt.Printf("PercWin1Used %f, used Win1Used %d cur Ctr %d rolling Cter %d \n", percWin1Used, win1Used, curMinCounter, rollingCtr)
-	if rollingCtr <= uint32(w.rpmLimit) {
-		//	fmt.Printf("Incrementing: Min %d, Rolling Counter %d , Win1 %d, Current %d\n", curMin, rollingCtr, win1Used, curMinCounter)
-		w.store.Incr(fmt.Sprintf("%s#%d", w.clientID, curMin))
-		return true
+	prevWinUsePerc := 1 - curWinUsePerc
+	prevWinUseCount := uint32(prevWinUsePerc * float32(lastMinCounter))
+	rollingCtr := prevWinUseCount + curMinCounter
+	stats.PreviousWindowUsedPercent, stats.PreviousWindowUseCount, stats.RollingCounter, stats.CurrentCounter = prevWinUsePerc, prevWinUseCount, rollingCtr, curMinCounter
+
+	if rollingCtr <= uint32(w.Limit) {
+		w.Store.Incr(fmt.Sprintf("%s#%d", w.ClientID, curMin))
+		stats.Allow = true
+		return
 	}
-	fmt.Printf("Throttling: Min %d Rolling Counter %d , Win1 %d, Current %d\n", curMin, rollingCtr, win1Used, curMinCounter)
-	return false
+	stats.Allow = false
+	return
 }
 
 //Reset deletes all counter for the client
-func (w *SlidingWindow) Reset() error {
+func (w *SlidingWindowRateLimiter) Reset() error {
 	for i := 0; i < 60; i++ {
-		key := fmt.Sprintf("%s#%d", w.clientID, i)
-		e := w.store.Del(key)
+		key := fmt.Sprintf("%s#%d", w.ClientID, i)
+		e := w.Store.Del(key)
 		if e != nil {
 			return e
 		}

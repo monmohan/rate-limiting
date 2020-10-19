@@ -9,7 +9,7 @@ import (
 func TestConcurrentCallers(t *testing.T) {
 	fmt.Println("TestConcurrentCallers")
 	threshold := 100
-	w := getRateLimiter(threshold)
+	w := getRateLimiter(uint32(threshold))
 	numConcurCallers := 3
 	done := make(chan int, numConcurCallers)
 	err := 2 * numConcurCallers
@@ -46,7 +46,7 @@ func TestConcurrentCallers(t *testing.T) {
 func TestConcurrentSlidingMultiWindow(t *testing.T) {
 	fmt.Printf("Start Test: %s \n", t.Name())
 	threshold := 120
-	w := getRateLimiter(threshold)
+	w := getRateLimiter(uint32(threshold))
 	curTimeMin, curTimeSec := time.Now().Minute(), time.Now().Second()
 	secToNextMin := 60 - curTimeSec
 	fmt.Printf("Current Min:= %d, Seconds until next Min:= %d\n", curTimeMin, secToNextMin)
