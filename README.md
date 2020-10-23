@@ -39,9 +39,9 @@ A simple __sliding window , fixed rate__ rate limiting implementation based on [
   //Or Rate Limiter with stats interface, callers can examine stats like percentage window used etc.
   stats :=ratelimiter.AllowWithStats()
   
-  //here is how stats look
+  //Print stats, default format is JSON, example below
   fmt.Printf(stats)
-  
+  {"WindowTime":"H 7 M 43 S 40","CurrentBucketID":3,"CurrentCounter":17,"PreviousBucketID":2,"PreviousWindowUsedPercent":0.3611111,"PreviousWindowUseCount":21,"RollingCounter":38,"Allow":true}
   
 ```
 
