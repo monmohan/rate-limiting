@@ -9,7 +9,6 @@ import (
 
 	"github.com/benbjohnson/clock"
 	"github.com/bradfitz/gomemcache/memcache"
-	"github.com/monmohan/rate-limiting/local"
 	"github.com/monmohan/rate-limiting/memcached"
 )
 
@@ -29,7 +28,7 @@ func init() {
 
 func getRateLimiter(threshold uint32) Allower {
 	flag.Parse()
-	mc := NewRpmLimiter("TestClientSimple", threshold)
+	mc := PerMinute("TestClientSimple", threshold)
 	if *inmem == string(MEMCACHED) {
 		memcacheStore := configureMemcache()
 		fmt.Println("Tests running with memcache store...")
@@ -44,17 +43,11 @@ func getRateLimiter(threshold uint32) Allower {
 
 func getMutliMinRateLimiter(threshold uint32, minsz int, mockClock clock.Clock) *SlidingWindowRateLimiter {
 	flag.Parse()
-	mc := &SlidingWindowRateLimiter{
-		ClientID: "TestMultiMin",
-		Bucket:   ConvertToMinuteWindow(minsz),
-		Limit:    threshold,
-		Store:    &local.CounterStore{Counters: make(map[string]uint32, 0)},
-		CurrentTimeFunc: func() time.Time {
-			if mockClock != nil {
-				return mockClock.Now()
-			}
-			return time.Now()
-		},
+	mc := PerNMinute("TestMultiMin", threshold, minsz)
+	if mockClock != nil {
+		mc.CurrentTimeFunc = func() time.Time {
+			return mockClock.Now()
+		}
 	}
 	if *inmem == string(MEMCACHED) {
 		memcacheStore := configureMemcache()
@@ -72,11 +65,14 @@ func TestSimpleSliding(t *testing.T) {
 	fmt.Println("TestSimpleSliding ")
 	threshold := 50
 	err := 1
-	w := getRateLimiter(uint32(threshold))
+	w := getMutliMinRateLimiter(uint32(threshold), 1, nil)
 
 	numtimes := 0
 	for {
-		result := w.Allow()
+		stats := w.AllowWithStats()
+		fmt.Println(stats)
+		result := stats.Allow
+
 		if !result {
 			fmt.Printf("Number of times %d\n", numtimes)
 			break

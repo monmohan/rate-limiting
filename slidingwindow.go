@@ -8,37 +8,37 @@ import (
 	"github.com/monmohan/rate-limiting/local"
 )
 
-var oneMinWindow = ConvertToMinuteWindow(1)
+var oneMinWindow = convertToMinuteWindow(1)
 var inMemMapStore = &local.CounterStore{Counters: make(map[string]uint32)}
 
-//TimeWindow is an interface describing operations on a generic window of time
-//TimeWindow is represented as an integer indexed bucket. For example a one minute time window has 60 buckets from 0-59
-// and 15 minute TimeWindow has 4 buckets from 0-3
-type TimeWindow interface {
+//timewindow is an interface describing operations on a generic window of time
+//timewindow is represented as an integer indexed bucket. For example a one minute time window has 60 buckets from 0-59
+// and 15 minute timewindow has 4 buckets from 0-3
+type timewindow interface {
 	current(ts time.Time) (cur int, percent float32)
 	previous(cur int) (prev int)
 }
 
-//MinuteWindow is an implemention of TimeWindow for minute sized window
+//minutewindow is an implemention of TimeWindow for minute sized window
 //Minimum size of such a window is 1 min whereas maximum is 30 to guarantee atleast two windows in an hour
-type MinuteWindow struct {
+type minutewindow struct {
 	span int
 }
 
-//ConvertToMinuteWindow is a helper function which
+//convertToMinuteWindow is a helper function which
 //sets window to highest value <=30, that is a divisor of 60 e.g. if sz=17, actual window size will be 20
-func ConvertToMinuteWindow(sz int) *MinuteWindow {
+func convertToMinuteWindow(sz int) *minutewindow {
 	if sz > 30 {
 		sz = 30
 	}
 
 	buckets := 60 / sz
 	n := 60 / buckets
-	return &MinuteWindow{span: n}
+	return &minutewindow{span: n}
 
 }
 
-func (mw *MinuteWindow) current(ts time.Time) (cur int, curPercent float32) {
+func (mw *minutewindow) current(ts time.Time) (cur int, curPercent float32) {
 	//Build the map keys
 	curMin := ts.Minute()
 	cur = curMin / mw.span
@@ -49,7 +49,7 @@ func (mw *MinuteWindow) current(ts time.Time) (cur int, curPercent float32) {
 
 }
 
-func (mw *MinuteWindow) previous(cur int) (prev int) {
+func (mw *minutewindow) previous(cur int) (prev int) {
 	if cur == 0 {
 		return (60 / mw.span) - 1
 	}
@@ -74,7 +74,7 @@ type SlidingWindowRateLimiter struct {
 	Limit           uint32
 	Store           CounterStore
 	ClientID        string
-	Bucket          TimeWindow
+	Bucket          timewindow
 	CurrentTimeFunc func() time.Time
 }
 type windowTime time.Time
@@ -111,13 +111,25 @@ func (w SlidingWindowRateLimiter) String() string {
 
 }
 
-//NewRpmLimiter as name suggests provides "per minute"  based rate limiting
+//PerMinute as name suggests provides "per minute"  based rate limiting
 // Threhsold - the allowed rate, maximum requests in a minute
 // id - a string identifying rate bucket.
 // Generally it would be your userId or applicationID for which the rate bucket is created
 // The default counter store is used which is an in-memory map. For production use Memcached backed store
-func NewRpmLimiter(id string, threshold uint32) *SlidingWindowRateLimiter {
+func PerMinute(id string, threshold uint32) *SlidingWindowRateLimiter {
 	s := SlidingWindowRateLimiter{ClientID: id, Limit: threshold, Store: inMemMapStore, Bucket: oneMinWindow}
+	return &s
+
+}
+
+//PerNMinute as name suggests provides rate limiting for minute window greater than 1
+// 0 < N<= 30
+// Threhsold - the allowed rate, maximum requests in a minute
+// id - a string identifying rate bucket.
+// Generally it would be your userId or applicationID for which the rate bucket is created
+// The default counter store is used which is an in-memory map. For production use Memcached backed store
+func PerNMinute(id string, threshold uint32, N int) *SlidingWindowRateLimiter {
+	s := SlidingWindowRateLimiter{ClientID: id, Limit: threshold, Store: inMemMapStore, Bucket: convertToMinuteWindow(N)}
 	return &s
 
 }
