@@ -45,11 +45,16 @@ func getRateLimiter(threshold uint32) Allower {
 func getMutliMinRateLimiter(threshold uint32, minsz int, mockClock clock.Clock) *SlidingWindowRateLimiter {
 	flag.Parse()
 	mc := &SlidingWindowRateLimiter{
-		ClientID:        "TestMultiMin",
-		Bucket:          ConvertToMinuteWindow(minsz),
-		Limit:           threshold,
-		Store:           &local.CounterStore{Counters: make(map[string]uint32, 0)},
-		CurrentTimeFunc: func() time.Time { return mockClock.Now() },
+		ClientID: "TestMultiMin",
+		Bucket:   ConvertToMinuteWindow(minsz),
+		Limit:    threshold,
+		Store:    &local.CounterStore{Counters: make(map[string]uint32, 0)},
+		CurrentTimeFunc: func() time.Time {
+			if mockClock != nil {
+				return mockClock.Now()
+			}
+			return time.Now()
+		},
 	}
 	if *inmem == string(MEMCACHED) {
 		memcacheStore := configureMemcache()

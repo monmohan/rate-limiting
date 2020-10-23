@@ -4,41 +4,46 @@ import (
 	"fmt"
 	"testing"
 	"time"
+
+	"github.com/benbjohnson/clock"
 )
 
 func TestConcurrentCallers(t *testing.T) {
 	fmt.Println("TestConcurrentCallers")
 	threshold := 100
-	w := getRateLimiter(uint32(threshold))
-	numConcurCallers := 3
-	done := make(chan int, numConcurCallers)
-	err := 2 * numConcurCallers
-	maxCalls := 2 * threshold //just to avoid deadlock
+	winsizes := []int{1, 5, 20, 30}
+	for _, winsz := range winsizes {
+		w := getMutliMinRateLimiter(uint32(threshold), winsz, nil)
+		numConcurCallers := 3
+		done := make(chan int, numConcurCallers)
+		err := 2 * numConcurCallers
+		maxCalls := 2 * threshold //just to avoid deadlock
 
-	sendRequest := func() {
-		i := 0
-		for i < maxCalls {
-			result := w.Allow()
+		sendRequest := func() {
+			i := 0
+			for i < maxCalls {
+				result := w.Allow()
 
-			if !result {
-				fmt.Printf("Throttled %d\n", i)
-				done <- i
-				break
+				if !result {
+					fmt.Printf("Throttled %d\n", i)
+					done <- i
+					break
+				}
+				i++
 			}
-			i++
 		}
-	}
-	for i := 0; i < numConcurCallers; i++ {
-		go sendRequest()
-	}
-	reqSent := 0
-	for i := 0; i < 3; i++ {
-		reqSent += <-done
-	}
+		for i := 0; i < numConcurCallers; i++ {
+			go sendRequest()
+		}
+		reqSent := 0
+		for i := 0; i < 3; i++ {
+			reqSent += <-done
+		}
 
-	fmt.Printf("Total Requests Sent %d\n", reqSent)
-	if reqSent > (threshold + err) {
-		t.Fatalf("Failed to throttle correctly, %d requests were sent", reqSent)
+		fmt.Printf("Total Requests Sent %d\n", reqSent)
+		if reqSent > (threshold + err) {
+			t.Fatalf("Failed to throttle correctly, %d requests were sent", reqSent)
+		}
 	}
 
 }
@@ -112,5 +117,58 @@ func TestConcurrentSlidingMultiWindow(t *testing.T) {
 	nextMaxAllowed = threshold - int(float32(5*totalInWindow2)/float32(6))
 	sendParallel(30*time.Second, sendRequest)
 	validate(nextMaxAllowed)
+
+}
+
+func TestConcurrentSlidingMultiWindowMultiMin(t *testing.T) {
+	fmt.Println("TestConcurrentSliding-MultiWindow-MultiMin ")
+	threshold := 60
+	windowSizes := []int{5, 10, 12, 15, 20, 30}
+	//windowSizes := []int{30}
+	err := 3
+	sendRequest := func(numRequests int, maxAllowed int, w *SlidingWindowRateLimiter, clock clock.Clock) int {
+		fmt.Printf("Called at Time Min,Sec = %d,%d ; MaxAllowed=%d\n", clock.Now().Minute(), clock.Now().Second(), maxAllowed)
+		i := 0
+		for ; i < numRequests; i++ {
+			stats := w.AllowWithStats()
+			fmt.Println(stats)
+			result := stats.Allow
+			if result && i > (maxAllowed+err) {
+				t.Fatalf("Throttling failed, Total requests sent = %d\n", i)
+			}
+			if !result {
+				if i < (maxAllowed - err) {
+					t.Fatalf("Throttled unnecessarily, Total requests sent = %d\n", i)
+				}
+				break
+			}
+
+		}
+		fmt.Printf("Total Requests sent =%d\n", i)
+		return i
+	}
+
+	for _, winsz := range windowSizes {
+		mockClock := clock.NewMock() // initialized to unix zero ts
+		w := getMutliMinRateLimiter(uint32(threshold), winsz, mockClock)
+		durationInStartWin := mockClock.Now().Minute() % winsz
+		nextMaxAllowed := threshold
+		sendRequest(threshold/2, nextMaxAllowed, w, mockClock)
+		mockClock.Add(1 * time.Minute) //add a minute and send rest
+		sendRequest(threshold/2, nextMaxAllowed, w, mockClock)
+
+		//advance clock by window size and 100 seconds into second window
+		mockClock.Add(time.Duration(winsz) * time.Minute)
+		mockClock.Add(40 * time.Second)
+		nextMaxAllowed = int(float32(100+(60*durationInStartWin)) / float32((60 * winsz)) * float32(threshold))
+		sendRequest(threshold, nextMaxAllowed, w, mockClock)
+		//try again in 20 seconds, it should throttle
+		mockClock.Add(20 * time.Second)
+		s := sendRequest(threshold, 1, w, mockClock)
+		mockClock.Add(1 * time.Minute)
+		//3 minute into the second window by now
+		nextMaxAllowed = (int(float32(180+(60*durationInStartWin)) / float32((winsz * 60)) * float32(threshold))) - (nextMaxAllowed + s)
+		sendRequest(threshold, nextMaxAllowed, w, mockClock)
+	}
 
 }

@@ -22,7 +22,7 @@ type TimeWindow interface {
 //MinuteWindow is an implemention of TimeWindow for minute sized window
 //Minimum size of such a window is 1 min whereas maximum is 30 to guarantee atleast two windows in an hour
 type MinuteWindow struct {
-	n int
+	span int
 }
 
 //ConvertToMinuteWindow is a helper function which
@@ -34,24 +34,24 @@ func ConvertToMinuteWindow(sz int) *MinuteWindow {
 
 	buckets := 60 / sz
 	n := 60 / buckets
-	return &MinuteWindow{n: n}
+	return &MinuteWindow{span: n}
 
 }
 
 func (mw *MinuteWindow) current(ts time.Time) (cur int, curPercent float32) {
 	//Build the map keys
 	curMin := ts.Minute()
-	cur = curMin / mw.n
-	minUsed := ts.Minute() % mw.n
+	cur = curMin / mw.span
+	minUsed := ts.Minute() % mw.span
 	totalSecs := minUsed*60 + ts.Second()
-	curPercent = float32(totalSecs) / float32((mw.n * 60))
+	curPercent = float32(totalSecs) / float32((mw.span * 60))
 	return
 
 }
 
 func (mw *MinuteWindow) previous(cur int) (prev int) {
 	if cur == 0 {
-		return (60 / mw.n) - 1
+		return (60 / mw.span) - 1
 	}
 	return cur - 1
 }
