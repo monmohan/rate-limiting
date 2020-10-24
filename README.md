@@ -31,20 +31,22 @@ A simple __sliding window , fixed rate__ rate limiting implementation based on [
   //Create a ratelimiter which will allow 10000 requests per minute
   rateLimiter := PerMinute("Somekey", 10000)
   
-  //Choose a store for counters, There are two OOTB, Memcached and local.
-  //local is an In-Memory map, to be used only for testing. For production use Memcached. Its proven to work at scale.
-  //Below is an example for using local memcached as backing counter store. 
-  //In production, you would likely use a cluster or something like AWS Elasticache
+ /* Choose a store for counters, There are two OOTB, Memcached and local.
+  * local is an In-Memory map, to be used only for testing. For production use Memcached. Its proven to work at scale.
+  * Below is an example for using local memcached as backing counter store. 
+  * In production, you would likely use a cluster or something like AWS Elasticache
+  */
   rateLimiter.Store = &memcached.CounterStore{Client: memcache.New("127.0.0.1:11211")}
   
   //Now ratelimiter is ready to use
   allowed :=rateLimiter.Allow()
   
-  //Or Use AllowWithStats() which returns all stats based which allow/deny flag was set. Callers can examine stats like percentage window used etc.
+ /* Or Use AllowWithStats() which returns all stats based on which allow/deny flag was set by the rate limiter
+  * Callers can examine stats like percentage window used etc.
+  */
   stats :=ratelimiter.AllowWithStats()
   
-  //Print stats, default format is JSON, example below
-  fmt.Printf(stats)
+  //If you print stats struct, this is what you get (converted to JSON by default)
   {"WindowTime":"H 7 M 43 S 40","CurrentBucketID":3,"CurrentCounter":17,"PreviousBucketID":2,"PreviousWindowUsedPercent":0.3611111,"PreviousWindowUseCount":21,"RollingCounter":38,"Allow":true}
   
 ```
