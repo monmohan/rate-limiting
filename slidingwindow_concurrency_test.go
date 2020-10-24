@@ -176,6 +176,12 @@ func TestConcurrentSlidingMultiWindowMultiMin(t *testing.T) {
 		nextMaxAllowed = int(float32(100+(60*durationInStartWin)) / float32((60 * winsz)) * float32(threshold))
 		sendParallel(w, mockClock)
 		validate(nextMaxAllowed)
+		mockClock.Add(80 * time.Second)
+		//3 minute into the second window by now
+		nextMaxAllowed = (int(float32(180+(60*durationInStartWin)) / float32((winsz * 60)) * float32(threshold))) - (nextMaxAllowed)
+		sendParallel(w, mockClock)
+		validate(nextMaxAllowed)
+
 	}
 
 }
