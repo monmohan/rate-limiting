@@ -27,16 +27,20 @@ A simple __sliding window , fixed rate__ rate limiting implementation based on [
 
 ### Single Minute Window
 ```go
+  
+  //Create a ratelimiter which will allow 10000 requests per minute
+  rateLimiter := PerMinute("Somekey", 10000)
+  
   //Choose a store for counters, There are two OOTB, Memcached and local.
-  //local is an In-Memory map, to be used only for testing. For production use Memcached. Its proven to work at scale
-  //Below example for a local memcached. In production, you would use a cluster or something like AWS Elasticache
-  rateLimiter := PerMinute("Somekey", threshold)
+  //local is an In-Memory map, to be used only for testing. For production use Memcached. Its proven to work at scale.
+  //Below is an example for using local memcached as backing counter store. 
+  //In production, you would likely use a cluster or something like AWS Elasticache
   rateLimiter.Store = &memcached.CounterStore{Client: memcache.New("127.0.0.1:11211")}
   
   //Now ratelimiter is ready to use
   allowed :=rateLimiter.Allow()
   
-  //Or Rate Limiter with stats interface, callers can examine stats like percentage window used etc.
+  //Or Use AllowWithStats() which returns all stats based which allow/deny flag was set. Callers can examine stats like percentage window used etc.
   stats :=ratelimiter.AllowWithStats()
   
   //Print stats, default format is JSON, example below
