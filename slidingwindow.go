@@ -9,6 +9,7 @@ import (
 )
 
 var oneMinWindow = convertToMinuteWindow(1)
+var oneSecWindow = convertToSecondWindow(1)
 var inMemMapStore = &local.CounterStore{Counters: make(map[string]uint32)}
 
 //timewindow is an interface describing operations on a generic window of time
@@ -28,13 +29,16 @@ type minutewindow struct {
 //convertToMinuteWindow is a helper function which
 //sets window to highest value <=30, that is a divisor of 60 e.g. if sz=17, actual window size will be 20
 func convertToMinuteWindow(sz int) *minutewindow {
-	if sz > 30 {
-		sz = 30
+	return &minutewindow{span: bucket(sz, 60)}
+
+}
+func bucket(sz int, max int) int {
+	if sz > max/2 {
+		sz = max / 2
 	}
 
-	buckets := 60 / sz
-	n := 60 / buckets
-	return &minutewindow{span: n}
+	buckets := max / sz
+	return max / buckets
 
 }
 
@@ -54,6 +58,34 @@ func (mw *minutewindow) previous(cur int) (prev int) {
 		return (60 / mw.span) - 1
 	}
 	return cur - 1
+}
+
+type secondWindow struct {
+	span int
+}
+
+func (sw *secondWindow) current(ts time.Time) (cur int, curPercent float32) {
+	//Build the map keys
+	curSecond := ts.Second()
+	cur = curSecond / sw.span
+	millis := (ts.Nanosecond() / (1000 * 1000))
+	totalMillis := (curSecond%sw.span)*1000 + millis
+	curPercent = float32(totalMillis) / float32((sw.span * 1000))
+	fmt.Printf("current: total millis %d, percent %2f\n", totalMillis, curPercent)
+	return
+
+}
+
+func (sw *secondWindow) previous(cur int) (prev int) {
+	if cur == 0 {
+		return (60 / sw.span) - 1
+	}
+	return cur - 1
+}
+
+func convertToSecondWindow(sz int) *secondWindow {
+	return &secondWindow{span: bucket(sz, 60)}
+
 }
 
 //CounterStore manages counter value for each minute bucket
@@ -80,7 +112,12 @@ type SlidingWindowRateLimiter struct {
 type windowTime time.Time
 
 func (f windowTime) MarshalJSON() ([]byte, error) {
-	return json.Marshal(fmt.Sprintf("H %d M %d S %d", time.Time(f).Hour(), time.Time(f).Minute(), time.Time(f).Second()))
+	return json.Marshal(fmt.Sprintf("H %d M %d S %d MS %d",
+		time.Time(f).Hour(),
+		time.Time(f).Minute(),
+		time.Time(f).Second(),
+		(time.Time(f).Nanosecond() / (1000 * 1000)),
+	))
 }
 
 // WindowStats is a struct holding information on window stats during processing
@@ -134,6 +171,29 @@ func PerNMinute(id string, threshold uint32, N int) *SlidingWindowRateLimiter {
 
 }
 
+//PerSecond as name suggests provides "per second"  based rate limiting
+// Threhsold - the allowed rate, maximum requests in a minute
+// id - a string identifying rate bucket.
+// Generally it would be your userId or applicationID for which the rate bucket is created
+// The default counter store is used which is an in-memory map. For production use Memcached backed store
+func PerSecond(id string, threshold uint32) *SlidingWindowRateLimiter {
+	s := SlidingWindowRateLimiter{ClientID: id, Limit: threshold, Store: inMemMapStore, Bucket: oneSecWindow}
+	return &s
+
+}
+
+//PerNSecond as name suggests provides rate limiting for second window greater than 1
+// 0 < N<= 30
+// Threhsold - the allowed rate, maximum requests in a minute
+// id - a string identifying rate bucket.
+// Generally it would be your userId or applicationID for which the rate bucket is created
+// The default counter store is used which is an in-memory map. For production use Memcached backed store
+func PerNSecond(id string, threshold uint32, N int) *SlidingWindowRateLimiter {
+	s := SlidingWindowRateLimiter{ClientID: id, Limit: threshold, Store: inMemMapStore, Bucket: convertToSecondWindow(N)}
+	return &s
+
+}
+
 //Allow , throttle request if rpm exceeds threshold
 func (w *SlidingWindowRateLimiter) Allow() bool {
 	return w.AllowWithStats().Allow
@@ -146,13 +206,13 @@ func (w *SlidingWindowRateLimiter) AllowWithStats() (stats WindowStats) {
 		now = w.CurrentTimeFunc()
 	}
 	stats = WindowStats{RequestTime: now, WindowTime: windowTime(now)}
-	curMin, curWinUsePerc := w.Bucket.current(now)
-	prevMin := w.Bucket.previous(curMin)
-	stats.PreviousBucketID, stats.CurrentBucketID = prevMin, curMin
+	curBucket, curWinUsePerc := w.Bucket.current(now)
+	prevBucket := w.Bucket.previous(curBucket)
+	stats.PreviousBucketID, stats.CurrentBucketID = prevBucket, curBucket
 
 	//key is ClientID#minute [0-59] and value is the counter
-	storeKeyPrevMin := fmt.Sprintf("%s#%d", w.ClientID, prevMin)
-	storeKeyCurMin := fmt.Sprintf("%s#%d", w.ClientID, curMin)
+	storeKeyPrevMin := fmt.Sprintf("%s#%d", w.ClientID, prevBucket)
+	storeKeyCurMin := fmt.Sprintf("%s#%d", w.ClientID, curBucket)
 	lastMinCounter, curMinCounter, err := w.Store.Fetch(storeKeyPrevMin, storeKeyCurMin)
 	if err != nil {
 		stats.LastErr = fmt.Errorf("Unable to fetch counters, ERR = %s, will allow requests\n ", err.Error())
@@ -167,7 +227,7 @@ func (w *SlidingWindowRateLimiter) AllowWithStats() (stats WindowStats) {
 	stats.PreviousWindowUsedPercent, stats.PreviousWindowUseCount, stats.RollingCounter, stats.CurrentCounter = prevWinUsePerc, prevWinUseCount, rollingCtr, curMinCounter
 
 	if rollingCtr <= uint32(w.Limit) {
-		w.Store.Incr(fmt.Sprintf("%s#%d", w.ClientID, curMin))
+		w.Store.Incr(fmt.Sprintf("%s#%d", w.ClientID, curBucket))
 		stats.Allow = true
 		return
 	}
