@@ -24,6 +24,7 @@ A simple __sliding window , fixed rate__ rate limiting implementation based on [
 * Hence the total count in the window 22:40 - 23:40 ~= 30+50. So we are below the limit of 100 and the request should be allowed
 
 ## Using the Rate Limiter
+The rate limiter supports window size of 1-30 seconds and 1-30 minutes. This allows both granular (persecond for example) rate limiting as well as broad window like 30 minutes. Usage is explained below -
 
 ### Single Minute Window
 ```go
@@ -56,6 +57,14 @@ A simple __sliding window , fixed rate__ rate limiting implementation based on [
   //N=15, A rate limiter with 15 minute window thershold instead of 1
   rateLimiter := PerNMinute("Somekey", threshold,15)
   //rest of the usage remains same as per-minute
+  
+  
+```
+### Per Second/Per N Seconds Window
+```go
+  //N=15, A rate limiter with 15 second window thershold
+  rateLimiter := PerNSecond("Somekey", threshold,15)
+  //rest of the usage remains same ..
   
   
 ```
