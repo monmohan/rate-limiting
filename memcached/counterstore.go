@@ -17,7 +17,7 @@ func (mc CounterStore) String() string {
 }
 
 //Fetch returns the counters for the provided keys
-func (mc *CounterStore) Fetch(prev string, cur string) (PrevMinute uint32, Current uint32, err error) {
+func (mc *CounterStore) Fetch(prev string, cur string) (prevbucketcounter uint32, curbucketcounter uint32, err error) {
 	result, err := mc.Client.GetMulti([]string{prev, cur})
 
 	if err != nil && len(result) == 0 {
@@ -25,23 +25,23 @@ func (mc *CounterStore) Fetch(prev string, cur string) (PrevMinute uint32, Curre
 	}
 	if v, ok := result[prev]; ok {
 		val, err := strconv.ParseUint(string(v.Value), 10, 32)
-		PrevMinute = uint32(val)
+		prevbucketcounter = uint32(val)
 		if err != nil {
 			fmt.Printf("Memcache Store : Invalid value for CounterID=%s! %v\n", prev, err.Error())
-			PrevMinute = 0
+			prevbucketcounter = 0
 		}
 	}
 
 	if v, ok := result[cur]; ok {
 		val, err := strconv.ParseUint(string(v.Value), 10, 32)
-		Current = uint32(val)
+		curbucketcounter = uint32(val)
 		if err != nil {
 			fmt.Printf("Memcache Store : Invalid value for CounterID=%s! %v\n", cur, err.Error())
-			Current = 0
+			curbucketcounter = 0
 		}
 	}
 
-	return PrevMinute, Current, nil
+	return prevbucketcounter, curbucketcounter, nil
 
 }
 

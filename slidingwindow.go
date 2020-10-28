@@ -12,6 +12,19 @@ var oneMinWindow = convertToMinuteWindow(1)
 var oneSecWindow = convertToSecondWindow(1)
 var inMemMapStore = &local.CounterStore{Counters: make(map[string]uint32)}
 
+//CounterStore manages counter value for each minute bucket
+type CounterStore interface {
+	Incr(counterID string) error
+	Fetch(prev string, cur string) (prevbucketcounter uint32, curbucketcounter uint32, err error)
+	Del(counterID string) error
+}
+
+//Allower interface, implementations would provide different algorithms
+//to enforce ratelimits
+type Allower interface {
+	Allow() bool
+}
+
 //timewindow is an interface describing operations on a generic window of time
 //timewindow is represented as an integer indexed bucket. For example a one minute time window has 60 buckets from 0-59
 // and 15 minute timewindow has 4 buckets from 0-3
@@ -86,19 +99,6 @@ func (sw *secondWindow) previous(cur int) (prev int) {
 func convertToSecondWindow(sz int) *secondWindow {
 	return &secondWindow{span: bucket(sz, 60)}
 
-}
-
-//CounterStore manages counter value for each minute bucket
-type CounterStore interface {
-	Incr(counterID string) error
-	Fetch(prev string, cur string) (PrevMinute uint32, current uint32, err error)
-	Del(key string) error
-}
-
-//Allower interface, implementations would provide different algorithms
-//to enforce ratelimits
-type Allower interface {
-	Allow() bool
 }
 
 //SlidingWindowRateLimiter is an implementation of Allower
