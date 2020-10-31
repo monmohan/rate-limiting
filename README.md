@@ -1,5 +1,6 @@
 # Rate-limiting
 A simple __sliding window , fixed rate__ rate limiting implementation supporting flexible second and minute window sizes
+This is an implementation of the [idea presented here](https://blog.cloudflare.com/counting-things-a-lot-of-different-things/)
 
 ## Overview
 * Simple algorithm for rate limiting at scale
@@ -39,7 +40,7 @@ The rate limiter supports window size of 1-30 seconds and 1-30 minutes. This all
   */
   rateLimiter.Store = &memcached.CounterStore{Client: memcache.New("127.0.0.1:11211")}
   
-  //Now ratelimiter is ready to use, should "
+  //Now ratelimiter is ready to use
   client:=Client("someKey") //UserID, ApplicationID, IP etc.
   allowed :=rateLimiter.Allow(client)
   
