@@ -26,24 +26,24 @@ func init() {
 
 }
 
-func getRateLimiter(threshold uint32) Allower {
+func getRateLimiter(client Client, threshold uint32) Allower {
 	flag.Parse()
-	mc := PerMinute("TestClientSimple", threshold)
+	mc := PerMinute(threshold)
 	if *inmem == string(MEMCACHED) {
 		memcacheStore := configureMemcache()
 		fmt.Println("Tests running with memcache store...")
 		mc.Store = memcacheStore
 	}
-	e := mc.Reset()
+	e := mc.Reset(client)
 	if e != nil {
 		panic(fmt.Sprintf("Counter Reset for Memcache failed Tests can't be executed, error=%s", e.Error()))
 	}
 	return mc
 }
 
-func getMutliMinRateLimiter(threshold uint32, minsz int, mockClock clock.Clock) *SlidingWindowRateLimiter {
+func getMutliMinRateLimiter(client Client, threshold uint32, minsz int, mockClock clock.Clock) *SlidingWindowRateLimiter {
 	flag.Parse()
-	mc := PerNMinute("TestMultiMin", threshold, minsz)
+	mc := PerNMinute(threshold, minsz)
 	if mockClock != nil {
 		mc.CurrentTimeFunc = func() time.Time {
 			return mockClock.Now()
@@ -54,15 +54,15 @@ func getMutliMinRateLimiter(threshold uint32, minsz int, mockClock clock.Clock) 
 		fmt.Println("Tests running with memcache store...")
 		mc.Store = memcacheStore
 	}
-	e := mc.Reset()
+	e := mc.Reset(client)
 	if e != nil {
 		panic(fmt.Sprintf("Counter Reset for Memcache failed Tests can't be executed, error=%s", e.Error()))
 	}
 	return mc
 }
-func getMutliSecRateLimiter(threshold uint32, secsz int, mockClock clock.Clock) *SlidingWindowRateLimiter {
+func getMutliSecRateLimiter(client Client, threshold uint32, secsz int, mockClock clock.Clock) *SlidingWindowRateLimiter {
 	flag.Parse()
-	mc := PerNSecond("TestMultiSecond", threshold, secsz)
+	mc := PerNSecond(threshold, secsz)
 	if mockClock != nil {
 		mc.CurrentTimeFunc = func() time.Time {
 			return mockClock.Now()
@@ -73,7 +73,7 @@ func getMutliSecRateLimiter(threshold uint32, secsz int, mockClock clock.Clock) 
 		fmt.Println("Tests running with memcache store...")
 		mc.Store = memcacheStore
 	}
-	e := mc.Reset()
+	e := mc.Reset(client)
 	if e != nil {
 		panic(fmt.Sprintf("Counter Reset for Memcache failed Tests can't be executed, error=%s", e.Error()))
 	}
@@ -84,11 +84,12 @@ func TestSimpleSliding(t *testing.T) {
 	fmt.Println("TestSimpleSliding ")
 	threshold := 50
 	err := 1
-	w := getMutliMinRateLimiter(uint32(threshold), 1, nil)
+	client := Client("TestSimpleSliding")
+	w := getMutliMinRateLimiter(client, uint32(threshold), 1, nil)
 
 	numtimes := 0
 	for {
-		stats := w.AllowWithStats()
+		stats := w.AllowWithStats(client)
 		fmt.Println(stats)
 		result := stats.Allow
 
@@ -109,7 +110,8 @@ func TestSimpleSliding(t *testing.T) {
 func TestBasicSliding(t *testing.T) {
 	fmt.Println("TestBasicSliding ")
 	threshold := 50
-	w := getRateLimiter(uint32(threshold))
+	client := Client("TestBasicSliding")
+	w := getRateLimiter(client, uint32(threshold))
 	var wg sync.WaitGroup
 	err := 2 //allow for some laxity
 
@@ -118,7 +120,7 @@ func TestBasicSliding(t *testing.T) {
 		fmt.Printf("Sending %d Requests in minute window = %d, Second := %d \n", numReqToSend, time.Now().Minute(), time.Now().Second())
 		total, i := 0, 0
 		for i < numReqToSend {
-			result := w.Allow()
+			result := w.Allow(client)
 			total = previous + i
 
 			if result && total > threshold+err {
@@ -154,7 +156,8 @@ func TestBasicSliding(t *testing.T) {
 func TestSlidingMultiWindow(t *testing.T) {
 	fmt.Println("TestSlidingMultiWindow ")
 	threshold := 120
-	w := getRateLimiter(uint32(threshold))
+	client := Client("TestSlidingMultiWindow")
+	w := getRateLimiter(client, uint32(threshold))
 	curTimeMin, curTimeSec := time.Now().Minute(), time.Now().Second()
 	secToNextMin := 60 - curTimeSec
 	fmt.Printf("Current Min:= %d, Seconds until next Min:= %d\n", curTimeMin, secToNextMin)
@@ -166,7 +169,7 @@ func TestSlidingMultiWindow(t *testing.T) {
 		i := 0
 		defer func() { done <- i }()
 		for ; i < numRequests; i++ {
-			result := w.Allow()
+			result := w.Allow(client)
 			if result && i > (maxAllowed+err) {
 				t.Fatalf("Throttling failed, Total requests sent = %d\n", i)
 			}
@@ -207,6 +210,7 @@ func TestSlidingMultiWindow(t *testing.T) {
 
 func TestBasicSlidingMultiMinute(t *testing.T) {
 	fmt.Println("TestBasicSlidingMultiMinute ")
+	client := Client("TestBasicSlidingMultiMinute")
 	threshold := 50
 	windowSizes := []int{10, 5, 15, 20, 12, 30}
 	var wg sync.WaitGroup
@@ -216,7 +220,7 @@ func TestBasicSlidingMultiMinute(t *testing.T) {
 		fmt.Printf("Sending %d Requests in minute window = %d, Second := %d \n", numReqToSend, clock.Now().Minute(), clock.Now().Second())
 		total, i := 0, 0
 		for i < numReqToSend {
-			stats := w.AllowWithStats()
+			stats := w.AllowWithStats(client)
 			fmt.Println(stats)
 			result := stats.Allow
 			total = previous + i
@@ -238,7 +242,7 @@ func TestBasicSlidingMultiMinute(t *testing.T) {
 
 	for _, winsz := range windowSizes {
 		clock := clock.NewMock() // initialized to unix zero ts
-		w := getMutliMinRateLimiter(uint32(threshold), winsz, clock)
+		w := getMutliMinRateLimiter(client, uint32(threshold), winsz, clock)
 		wg.Add(1)
 		sendRequests(threshold/2, 0, w, clock)
 		clock.Add(time.Duration(winsz/2) * time.Minute)
@@ -254,14 +258,15 @@ func TestBasicSlidingMultiMinute(t *testing.T) {
 func TestSlidingMultiWindowMultiMin(t *testing.T) {
 	fmt.Println("TestSlidingMultiWindowMultiMin ")
 	threshold := 60
-	//windowSizes := []int{5, 10, 12, 15, 20, 30}
-	windowSizes := []int{10}
+	client := Client("TestSlidingMultiWindowMultiMin")
+	windowSizes := []int{5, 10, 12, 15, 20, 30}
+	//windowSizes := []int{10}
 	err := 3
 	sendRequest := func(numRequests int, maxAllowed int, w *SlidingWindowRateLimiter, clock clock.Clock) int {
 		fmt.Printf("Called at Time Min,Sec = %d,%d ; MaxAllowed=%d\n", clock.Now().Minute(), clock.Now().Second(), maxAllowed)
 		i := 0
 		for ; i < numRequests; i++ {
-			stats := w.AllowWithStats()
+			stats := w.AllowWithStats(client)
 			fmt.Println(stats)
 			result := stats.Allow
 			if result && i > (maxAllowed+err) {
@@ -281,7 +286,7 @@ func TestSlidingMultiWindowMultiMin(t *testing.T) {
 
 	for _, winsz := range windowSizes {
 		mockClock := clock.NewMock() // initialized to unix zero ts
-		w := getMutliMinRateLimiter(uint32(threshold), winsz, mockClock)
+		w := getMutliMinRateLimiter(client, uint32(threshold), winsz, mockClock)
 		durationInStartWin := mockClock.Now().Minute() % winsz
 		nextMaxAllowed := threshold
 		sendRequest(threshold/2, nextMaxAllowed, w, mockClock)
@@ -310,11 +315,12 @@ func TestSimpleSlidingPerSecond(t *testing.T) {
 	fmt.Println("TestSimpleSlidingPerSecond ")
 	threshold := 50
 	err := 1
-	w := getMutliSecRateLimiter(uint32(threshold), 1, nil)
+	client := Client("TestSimpleSlidingPerSecond")
+	w := getMutliSecRateLimiter(client, uint32(threshold), 1, nil)
 
 	numtimes := 0
 	for {
-		stats := w.AllowWithStats()
+		stats := w.AllowWithStats(client)
 		fmt.Println(stats)
 		result := stats.Allow
 
@@ -336,6 +342,7 @@ func TestBasicSlidingMultiSecond(t *testing.T) {
 	fmt.Println("TestBasicSlidingMultiSecond.. ")
 	threshold := 50
 	windowSizes := []int{1, 5, 10, 20, 30}
+	client := Client("TestBasicSlidingMultiSecond")
 	var wg sync.WaitGroup
 	sendRequests := func(numReqToSend int, previous int, w *SlidingWindowRateLimiter, clock clock.Clock) {
 		err := 2 //allow for some laxity
@@ -343,7 +350,7 @@ func TestBasicSlidingMultiSecond(t *testing.T) {
 		fmt.Printf("Sending %d Requests in minute window = %d, Second = %d, Millis = %d\n", numReqToSend, clock.Now().Minute(), clock.Now().Second(), (clock.Now().Nanosecond() / (1000 * 1000)))
 		total, i := 0, 0
 		for i < numReqToSend {
-			stats := w.AllowWithStats()
+			stats := w.AllowWithStats(client)
 			fmt.Println(stats)
 			result := stats.Allow
 			total = previous + i
@@ -365,7 +372,7 @@ func TestBasicSlidingMultiSecond(t *testing.T) {
 
 	for _, winsz := range windowSizes {
 		clock := clock.NewMock() // initialized to unix zero ts
-		w := getMutliSecRateLimiter(uint32(threshold), winsz, clock)
+		w := getMutliSecRateLimiter(client, uint32(threshold), winsz, clock)
 		wg.Add(1)
 		sendRequests(threshold/2, 0, w, clock)
 		clock.Add(time.Duration((winsz*1000)/2) * time.Millisecond)
@@ -383,13 +390,14 @@ func TestSlidingMultiWindowMultiSecond(t *testing.T) {
 	threshold := 60
 	windowSizes := []int{10, 20, 30, 12, 5}
 	//windowSizes := []int{30}
+	client := Client("TestSlidingMultiWindowMultiSecond")
 	err := 3
 	sendRequest := func(numRequests int, maxAllowed int, w *SlidingWindowRateLimiter, clock clock.Clock) int {
 		fmt.Printf("Called at Time Min,Sec,Milis = %d,%d,%d ; MaxAllowed=%d\n",
 			clock.Now().Minute(), clock.Now().Second(), (clock.Now().Nanosecond() / (1000 * 1000)), maxAllowed)
 		i := 0
 		for ; i < numRequests; i++ {
-			stats := w.AllowWithStats()
+			stats := w.AllowWithStats(client)
 			fmt.Println(stats)
 			result := stats.Allow
 			if result && i > (maxAllowed+err) {
@@ -409,7 +417,7 @@ func TestSlidingMultiWindowMultiSecond(t *testing.T) {
 
 	for _, winsz := range windowSizes {
 		mockClock := clock.NewMock() // initialized to unix zero ts
-		w := getMutliSecRateLimiter(uint32(threshold), winsz, mockClock)
+		w := getMutliSecRateLimiter(client, uint32(threshold), winsz, mockClock)
 		durationInStartWin := mockClock.Now().Second() % winsz
 		nextMaxAllowed := threshold
 		sendRequest(threshold/2, nextMaxAllowed, w, mockClock)
@@ -439,4 +447,23 @@ func configureMemcache() CounterStore {
 	c.MaxIdleConns = 5
 	return &memcached.CounterStore{Client: c}
 
+}
+
+type TraceableCounterStore struct {
+	wrappedStore CounterStore
+}
+
+func (t TraceableCounterStore) Incr(counterID string) error {
+	fmt.Printf("Increment counter %s\n", counterID)
+	return t.wrappedStore.Incr(counterID)
+}
+
+func (t TraceableCounterStore) Fetch(prevBucketIdx string, curBucketIdx string) (prevBucketCounter uint32, curBucketCounter uint32, err error) {
+	fmt.Printf("Fetch prevbucket %s, cur bucket %s\n", prevBucketIdx, curBucketIdx)
+	return t.wrappedStore.Fetch(prevBucketIdx, curBucketIdx)
+
+}
+func (t TraceableCounterStore) Del(counterID string) error {
+	fmt.Printf("Del key %s\n", counterID)
+	return t.wrappedStore.Del(counterID)
 }

@@ -12,25 +12,29 @@ var oneMinWindow = convertToMinuteWindow(1)
 var oneSecWindow = convertToSecondWindow(1)
 var inMemMapStore = &local.CounterStore{Counters: make(map[string]uint32)}
 
+//Client - A Rate Limiter Client, represented as a string
+type Client string
+
 //CounterStore manages counter value for each window
 type CounterStore interface {
 	Incr(counterID string) error
-	Fetch(prevWindowIdx string, curWindowIdx string) (prevWindowCounter uint32, curWindowCounter uint32, err error)
+	Fetch(prevBucketIdx string, curBucketIdx string) (prevBucketCounter uint32, curBucketCounter uint32, err error)
 	Del(counterID string) error
 }
 
 //Allower interface, implementations would provide different algorithms
 //to enforce ratelimits
 type Allower interface {
-	Allow() bool
+	Allow(client Client) bool
 }
 
 //timewindow is an interface describing operations on a generic window of time
-//timewindow is represented as an integer indexed window. For example a one minute time window has 60 windows from 0-59
-// and 15 minute timewindow has 4 windows, indexed from 0 to 3
+//timewindow is represented as an integer indexed bucket. For example a one minute time window has 60 buckets from 0-59
+// and 15 minute timewindow has 4 buckets, indexed from 0 to 3
 type timewindow interface {
 	current(ts time.Time) (cur int, percent float32)
 	previous(cur int) (prev int)
+	buckets() int
 }
 
 //minutewindow is an implemention of timeWindow for minute sized window
@@ -50,8 +54,8 @@ func calculateSize(sz int, max int) int {
 		sz = max / 2
 	}
 
-	windows := max / sz
-	return max / windows
+	buckets := max / sz
+	return max / buckets
 
 }
 
@@ -72,6 +76,9 @@ func (mw *minutewindow) previous(cur int) (prev int) {
 	}
 	return cur - 1
 }
+func (mw *minutewindow) buckets() int {
+	return 60 / mw.size
+}
 
 type secondWindow struct {
 	size int
@@ -84,7 +91,6 @@ func (sw *secondWindow) current(ts time.Time) (cur int, curPercent float32) {
 	millis := (ts.Nanosecond() / (1000 * 1000))
 	totalMillis := (curSecond%sw.size)*1000 + millis
 	curPercent = float32(totalMillis) / float32((sw.size * 1000))
-	fmt.Printf("current: total millis %d, percent %2f\n", totalMillis, curPercent)
 	return
 
 }
@@ -96,6 +102,10 @@ func (sw *secondWindow) previous(cur int) (prev int) {
 	return cur - 1
 }
 
+func (sw *secondWindow) buckets() int {
+	return 60 / sw.size
+}
+
 func convertToSecondWindow(sz int) *secondWindow {
 	return &secondWindow{size: calculateSize(sz, 60)}
 
@@ -105,7 +115,6 @@ func convertToSecondWindow(sz int) *secondWindow {
 type SlidingWindowRateLimiter struct {
 	Limit           uint32
 	Store           CounterStore
-	ClientID        string
 	windowInUse     timewindow
 	CurrentTimeFunc func() time.Time
 }
@@ -125,12 +134,12 @@ func (f windowTimeFormatter) MarshalJSON() ([]byte, error) {
 type WindowStats struct {
 	RequestTime               time.Time `json:"-"`
 	FormattedWindowTime       windowTimeFormatter
-	CurrentWindowIndex        int
+	CurrentBucketIndex        int
 	CurrentCounter            uint32
-	PreviousWindowIndex       int
-	PreviousWindowUsedPercent float32
-	PreviousWindowUseCount    uint32
-	RollingCounter            uint32
+	PreviousBucketIndex       int
+	PreviousBucketUsedPercent float32
+	PreviousBucketUseCount    uint32
+	WindowCounter             uint32
 	Allow                     bool
 	LastErr                   error `json:",omitempty"`
 }
@@ -144,17 +153,16 @@ func (ws WindowStats) String() string {
 }
 
 func (w SlidingWindowRateLimiter) String() string {
-	return fmt.Sprintf("CliendID = %s Threshold=%d, Store : %T", w.ClientID, w.Limit, w.Store)
+	return fmt.Sprintf("Threshold=%d, Store : %T", w.Limit, w.Store)
 
 }
 
 // PerMinute as name suggests provides "per minute"  based rate limiting
 // Threhsold - the allowed rate, maximum requests in a minute
-// id - A string that identifies the what the rate applies to.
 // Generally it would be your userId or applicationID for which this rate limiter is created
 // By default, an in-memory counter store is used. For production use Memcached backed store
-func PerMinute(id string, threshold uint32) *SlidingWindowRateLimiter {
-	s := SlidingWindowRateLimiter{ClientID: id, Limit: threshold, Store: inMemMapStore, windowInUse: oneMinWindow}
+func PerMinute(threshold uint32) *SlidingWindowRateLimiter {
+	s := SlidingWindowRateLimiter{Limit: threshold, Store: inMemMapStore, windowInUse: oneMinWindow}
 	return &s
 
 }
@@ -162,22 +170,20 @@ func PerMinute(id string, threshold uint32) *SlidingWindowRateLimiter {
 // PerNMinute as name suggests provides rate limiting for minute window greater than 1
 // 0 < N<= 30
 // Threhsold - the allowed rate, maximum requests in a minute
-// id - A string that identifies the what the rate applies to.
 // Generally it would be your userId or applicationID for which this rate limiter is created
 // By default, an in-memory counter store is used. For production use Memcached backed store
-func PerNMinute(id string, threshold uint32, N int) *SlidingWindowRateLimiter {
-	s := SlidingWindowRateLimiter{ClientID: id, Limit: threshold, Store: inMemMapStore, windowInUse: convertToMinuteWindow(N)}
+func PerNMinute(threshold uint32, N int) *SlidingWindowRateLimiter {
+	s := SlidingWindowRateLimiter{Limit: threshold, Store: inMemMapStore, windowInUse: convertToMinuteWindow(N)}
 	return &s
 
 }
 
 // PerSecond as name suggests provides "per second"  based rate limiting
 // Threhsold - the allowed rate, maximum requests in a minute
-// id - A string that identifies the what the rate applies to.
 // Generally it would be your userId or applicationID for which this rate limiter is created
 // By default, an in-memory counter store is used. For production use Memcached backed store
-func PerSecond(id string, threshold uint32) *SlidingWindowRateLimiter {
-	s := SlidingWindowRateLimiter{ClientID: id, Limit: threshold, Store: inMemMapStore, windowInUse: oneSecWindow}
+func PerSecond(threshold uint32) *SlidingWindowRateLimiter {
+	s := SlidingWindowRateLimiter{Limit: threshold, Store: inMemMapStore, windowInUse: oneSecWindow}
 	return &s
 
 }
@@ -185,34 +191,33 @@ func PerSecond(id string, threshold uint32) *SlidingWindowRateLimiter {
 //PerNSecond as name suggests provides rate limiting for second window greater than 1
 // 0 < N<= 30
 // Threhsold - the allowed rate, maximum requests in a minute
-// id - A string that identifies the what the rate applies to.
 // Generally it would be your userId or applicationID for which this rate limiter is created
 // By default, an in-memory counter store is used. For production use Memcached backed store
-func PerNSecond(id string, threshold uint32, N int) *SlidingWindowRateLimiter {
-	s := SlidingWindowRateLimiter{ClientID: id, Limit: threshold, Store: inMemMapStore, windowInUse: convertToSecondWindow(N)}
+func PerNSecond(threshold uint32, N int) *SlidingWindowRateLimiter {
+	s := SlidingWindowRateLimiter{Limit: threshold, Store: inMemMapStore, windowInUse: convertToSecondWindow(N)}
 	return &s
 
 }
 
 //Allow , throttle request if allowing this request would mean that we would cross the threshold specified by the rate limiter
-func (w *SlidingWindowRateLimiter) Allow() bool {
-	return w.AllowWithStats().Allow
+func (w *SlidingWindowRateLimiter) Allow(client Client) bool {
+	return w.AllowWithStats(client).Allow
 }
 
-//AllowWithStats - Return stats of the processed windows in addition to allow and deny
-func (w *SlidingWindowRateLimiter) AllowWithStats() (stats WindowStats) {
+//AllowWithStats - Return stats of the processed window in addition to allow and deny
+func (w *SlidingWindowRateLimiter) AllowWithStats(client Client) (stats WindowStats) {
 	now := time.Now()
 	if w.CurrentTimeFunc != nil {
 		now = w.CurrentTimeFunc()
 	}
 	stats = WindowStats{RequestTime: now, FormattedWindowTime: windowTimeFormatter(now)}
-	curWindowIdx, curWinUsePerc := w.windowInUse.current(now)
-	prevWindowIdx := w.windowInUse.previous(curWindowIdx)
-	stats.PreviousWindowIndex, stats.CurrentWindowIndex = prevWindowIdx, curWindowIdx
+	curBucketIdx, curBucketUsePerc := w.windowInUse.current(now)
+	prevBucketIdx := w.windowInUse.previous(curBucketIdx)
+	stats.PreviousBucketIndex, stats.CurrentBucketIndex = prevBucketIdx, curBucketIdx
 
 	//key is ClientID#minute [0-59] and value is the counter
-	storeKeyPrevMin := fmt.Sprintf("%s#%d", w.ClientID, prevWindowIdx)
-	storeKeyCurMin := fmt.Sprintf("%s#%d", w.ClientID, curWindowIdx)
+	storeKeyPrevMin := fmt.Sprintf("%s#%d", client, prevBucketIdx)
+	storeKeyCurMin := fmt.Sprintf("%s#%d", client, curBucketIdx)
 	lastMinCounter, curMinCounter, err := w.Store.Fetch(storeKeyPrevMin, storeKeyCurMin)
 	if err != nil {
 		stats.LastErr = fmt.Errorf("Unable to fetch counters, ERR = %s, will allow requests\n ", err.Error())
@@ -221,13 +226,13 @@ func (w *SlidingWindowRateLimiter) AllowWithStats() (stats WindowStats) {
 
 	}
 	//how much of the window have we used so far
-	prevWinUsePerc := 1 - curWinUsePerc
-	prevWinUseCount := uint32(prevWinUsePerc * float32(lastMinCounter))
-	rollingCtr := prevWinUseCount + curMinCounter
-	stats.PreviousWindowUsedPercent, stats.PreviousWindowUseCount, stats.RollingCounter, stats.CurrentCounter = prevWinUsePerc, prevWinUseCount, rollingCtr, curMinCounter
+	prevBucketUsePerc := 1 - curBucketUsePerc
+	prevBucketUseCount := uint32(prevBucketUsePerc * float32(lastMinCounter))
+	rollingCtr := prevBucketUseCount + curMinCounter
+	stats.PreviousBucketUsedPercent, stats.PreviousBucketUseCount, stats.WindowCounter, stats.CurrentCounter = prevBucketUsePerc, prevBucketUseCount, rollingCtr, curMinCounter
 
 	if rollingCtr <= uint32(w.Limit) {
-		w.Store.Incr(fmt.Sprintf("%s#%d", w.ClientID, curWindowIdx))
+		w.Store.Incr(fmt.Sprintf("%s#%d", client, curBucketIdx))
 		stats.Allow = true
 		return
 	}
@@ -236,9 +241,9 @@ func (w *SlidingWindowRateLimiter) AllowWithStats() (stats WindowStats) {
 }
 
 //Reset deletes all counter for the client
-func (w *SlidingWindowRateLimiter) Reset() error {
-	for i := 0; i < 60; i++ {
-		key := fmt.Sprintf("%s#%d", w.ClientID, i)
+func (w *SlidingWindowRateLimiter) Reset(client Client) error {
+	for i := 0; i < w.windowInUse.buckets(); i++ {
+		key := fmt.Sprintf("%s#%d", client, i)
 		e := w.Store.Del(key)
 		if e != nil {
 			return e

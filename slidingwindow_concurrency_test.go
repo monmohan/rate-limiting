@@ -11,9 +11,10 @@ import (
 func TestConcurrentCallers(t *testing.T) {
 	fmt.Println("TestConcurrentCallers")
 	threshold := 100
+	client := Client("TestConcurrentCallers")
 	winsizes := []int{1, 5, 20, 30}
 	for _, winsz := range winsizes {
-		w := getMutliMinRateLimiter(uint32(threshold), winsz, nil)
+		w := getMutliMinRateLimiter(client, uint32(threshold), winsz, nil)
 		numConcurCallers := 3
 		done := make(chan int, numConcurCallers)
 		err := 2 * numConcurCallers
@@ -22,7 +23,7 @@ func TestConcurrentCallers(t *testing.T) {
 		sendRequest := func() {
 			i := 0
 			for i < maxCalls {
-				result := w.Allow()
+				result := w.Allow(client)
 
 				if !result {
 					fmt.Printf("Throttled %d\n", i)
@@ -51,7 +52,8 @@ func TestConcurrentCallers(t *testing.T) {
 func TestConcurrentSlidingMultiWindow(t *testing.T) {
 	fmt.Printf("Start Test: %s \n", t.Name())
 	threshold := 120
-	w := getRateLimiter(uint32(threshold))
+	client := Client("TestConcurrentSlidingMultiWindow")
+	w := getRateLimiter(client, uint32(threshold))
 	curTimeMin, curTimeSec := time.Now().Minute(), time.Now().Second()
 	secToNextMin := 60 - curTimeSec
 	fmt.Printf("Current Min:= %d, Seconds until next Min:= %d\n", curTimeMin, secToNextMin)
@@ -63,7 +65,7 @@ func TestConcurrentSlidingMultiWindow(t *testing.T) {
 		fmt.Printf("Called at Time Min,Sec = %d,%d ;\n", time.Now().Minute(), time.Now().Second())
 		i := 0
 		for ; i < 2*threshold; i++ {
-			result := w.Allow()
+			result := w.Allow(client)
 			if !result {
 				fmt.Printf("Throttled %d\n", i)
 				done <- i
@@ -123,6 +125,7 @@ func TestConcurrentSlidingMultiWindow(t *testing.T) {
 func TestConcurrentSlidingMultiWindowMultiMin(t *testing.T) {
 	fmt.Println("TestConcurrentSliding-MultiWindow-MultiMin ")
 	threshold := 300
+	client := Client("TestConcurrentSlidingMultiWindowMultiMin")
 	windowSizes := []int{5, 10, 12, 15, 20, 30}
 	//windowSizes := []int{30}
 	numConcurCallers := 4
@@ -133,7 +136,7 @@ func TestConcurrentSlidingMultiWindowMultiMin(t *testing.T) {
 		fmt.Printf("Called at Time Min,Sec = %d,%d ;\n", clock.Now().Minute(), clock.Now().Second())
 		i := 0
 		for ; i < 2*threshold; i++ {
-			stats := w.AllowWithStats()
+			stats := w.AllowWithStats(client)
 			//fmt.Println(stats)
 			if !stats.Allow {
 				fmt.Printf("Throttled %d\n", i)
@@ -164,7 +167,7 @@ func TestConcurrentSlidingMultiWindowMultiMin(t *testing.T) {
 
 	for _, winsz := range windowSizes {
 		mockClock := clock.NewMock() // initialized to unix zero ts
-		w := getMutliMinRateLimiter(uint32(threshold), winsz, mockClock)
+		w := getMutliMinRateLimiter(client, uint32(threshold), winsz, mockClock)
 		durationInStartWin := mockClock.Now().Minute() % winsz
 		nextMaxAllowed := threshold
 		sendParallel(w, mockClock)

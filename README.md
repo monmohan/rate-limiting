@@ -30,7 +30,7 @@ The rate limiter supports window size of 1-30 seconds and 1-30 minutes. This all
 ```go
   
   //Create a ratelimiter which will allow 10000 requests per minute
-  rateLimiter := PerMinute("Somekey", 10000)
+  rateLimiter := PerMinute(10000)
   
  /* Choose a store for counters, There are two OOTB, Memcached and local.
   * local is an In-Memory map, to be used only for testing. For production use Memcached. Its proven to work at scale.
@@ -39,13 +39,14 @@ The rate limiter supports window size of 1-30 seconds and 1-30 minutes. This all
   */
   rateLimiter.Store = &memcached.CounterStore{Client: memcache.New("127.0.0.1:11211")}
   
-  //Now ratelimiter is ready to use
-  allowed :=rateLimiter.Allow()
+  //Now ratelimiter is ready to use, should "
+  client:=Client("someKey") //UserID, ApplicationID, IP etc.
+  allowed :=rateLimiter.Allow(client)
   
  /* Or Use AllowWithStats() which returns all stats based on which allow/deny flag was set by the rate limiter
   * Callers can examine stats like percentage window used etc.
   */
-  stats :=ratelimiter.AllowWithStats()
+  stats :=ratelimiter.AllowWithStats(client)
   
   //If you print stats struct, you would get a JSON representatino like below 
   {"FormattedWindowTime":"H 10 M 54 S 10 MS 754","CurrentWindowIndex":54,"CurrentCounter":51,"PreviousWindowIndex":53,"PreviousWindowUsedPercent":0.8333333,"PreviousWindowUseCount":0,"RollingCounter":51,"Allow":false}
@@ -55,7 +56,7 @@ The rate limiter supports window size of 1-30 seconds and 1-30 minutes. This all
 ### Multi-Minute Window
 ```go
   //N=15, A rate limiter with 15 minute window thershold instead of 1
-  rateLimiter := PerNMinute("Somekey", threshold,15)
+  rateLimiter := PerNMinute(threshold,15)
   //rest of the usage remains same as per-minute
   
   
@@ -63,7 +64,7 @@ The rate limiter supports window size of 1-30 seconds and 1-30 minutes. This all
 ### Per Second/Per N Seconds Window
 ```go
   //N=15, A rate limiter with 15 second window thershold
-  rateLimiter := PerNSecond("Somekey", threshold,15)
+  rateLimiter := PerNSecond(threshold,15)
   //rest of the usage remains same ..
   
   
