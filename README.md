@@ -47,8 +47,8 @@ The rate limiter supports window size of 1-30 seconds and 1-30 minutes. This all
   */
   stats :=ratelimiter.AllowWithStats()
   
-  //If you print stats struct, this is what you get (converted to JSON by default)
-  {"WindowTime":"H 7 M 43 S 40","CurrentBucketID":3,"CurrentCounter":17,"PreviousBucketID":2,"PreviousWindowUsedPercent":0.3611111,"PreviousWindowUseCount":21,"RollingCounter":38,"Allow":true}
+  //If you print stats struct, you would get a JSON representatino like below 
+  {"FormattedWindowTime":"H 10 M 54 S 10 MS 754","CurrentWindowIndex":54,"CurrentCounter":51,"PreviousWindowIndex":53,"PreviousWindowUsedPercent":0.8333333,"PreviousWindowUseCount":0,"RollingCounter":51,"Allow":false}
   
 ```
 

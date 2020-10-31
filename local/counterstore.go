@@ -1,7 +1,6 @@
 package local
 
 import (
-	"fmt"
 	"sync"
 )
 
@@ -11,10 +10,6 @@ import (
 type CounterStore struct {
 	mu       sync.Mutex //guard counters map
 	Counters map[string]uint32
-}
-
-func (im CounterStore) String() string {
-	return fmt.Sprintf("InMemory Store : Counters Map %v", im.Counters)
 }
 
 //Incr increments the counter value for the given key represented by counterID

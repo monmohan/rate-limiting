@@ -17,7 +17,7 @@ func (mc CounterStore) String() string {
 }
 
 //Fetch returns the counters for the provided keys
-func (mc *CounterStore) Fetch(prev string, cur string) (prevbucketcounter uint32, curbucketcounter uint32, err error) {
+func (mc *CounterStore) Fetch(prev string, cur string) (prevWindowCounter uint32, curWindowCounter uint32, err error) {
 	result, err := mc.Client.GetMulti([]string{prev, cur})
 
 	if err != nil && len(result) == 0 {
@@ -25,26 +25,27 @@ func (mc *CounterStore) Fetch(prev string, cur string) (prevbucketcounter uint32
 	}
 	if v, ok := result[prev]; ok {
 		val, err := strconv.ParseUint(string(v.Value), 10, 32)
-		prevbucketcounter = uint32(val)
+		prevWindowCounter = uint32(val)
 		if err != nil {
 			fmt.Printf("Memcache Store : Invalid value for CounterID=%s! %v\n", prev, err.Error())
-			prevbucketcounter = 0
+			prevWindowCounter = 0
 		}
 	}
 
 	if v, ok := result[cur]; ok {
 		val, err := strconv.ParseUint(string(v.Value), 10, 32)
-		curbucketcounter = uint32(val)
+		curWindowCounter = uint32(val)
 		if err != nil {
 			fmt.Printf("Memcache Store : Invalid value for CounterID=%s! %v\n", cur, err.Error())
-			curbucketcounter = 0
+			curWindowCounter = 0
 		}
 	}
 
-	return prevbucketcounter, curbucketcounter, nil
+	return prevWindowCounter, curWindowCounter, nil
 
 }
 
+//Incr - Implementation of ratelimit.CounterStore
 func (mc *CounterStore) Incr(counterID string) error {
 	_, err := mc.Client.Get(counterID)
 	if err == memcache.ErrCacheMiss {
@@ -58,6 +59,7 @@ func (mc *CounterStore) Incr(counterID string) error {
 
 }
 
+//Del - Implementation of ratelimit.CounterStore
 func (mc CounterStore) Del(key string) error {
 	err := mc.Client.Delete(key)
 	if err != memcache.ErrCacheMiss {
