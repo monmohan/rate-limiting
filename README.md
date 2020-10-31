@@ -1,5 +1,5 @@
 # Rate-limiting
-A simple __sliding window , fixed rate__ rate limiting implementation based on [blog by Cloudflare](https://blog.cloudflare.com/counting-things-a-lot-of-different-things/#fn3)
+A simple __sliding window , fixed rate__ rate limiting implementation supporting flexible second and minute window sizes
 
 ## Overview
 * Simple algorithm for rate limiting at scale
